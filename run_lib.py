@@ -29,7 +29,7 @@ import sampling
 
 import logging
 # logger = logging.getLogger()
-logging.disable(logging.CRITICAL)
+# logging.disable(logging.CRITICAL)
 
 FLAGS = flags.FLAGS
 PRNGKey = Any
@@ -226,7 +226,7 @@ class Trainer(object):
 
   def fit(self, rng, state, train_ds, eval_ds):
     config = self.config
-    # state = self.load(state)
+    state = self.load(state)
     pstate = flax.jax_utils.replicate(state)
     
     
@@ -260,29 +260,30 @@ class Trainer(object):
       loss = flax.jax_utils.unreplicate(loss)
       self.logger.log_loss(loss.mean(), step)
 
-      # if step != 0 and step % config.training.snapshot_freq_for_preemption == 0:
-      #   if jax.host_id() == 0:
-      #     saved_state = flax.jax_utils.unreplicate(pstate)
-      #     saved_state = saved_state.replace(rng=rng)
-      #     self.save(saved_state, step, preemtion=True)
+      if step != 0 and step % config.training.snapshot_freq_for_preemption == 0:
+        if jax.host_id() == 0:
+          saved_state = flax.jax_utils.unreplicate(pstate)
+          saved_state = saved_state.replace(rng=rng)
+          self.save(saved_state, step, preemtion=True)
       
       # Report the loss on an evaluation dataset periodically
-      # if step % config.training.eval_freq == 0:
-      #   eval_batch = next(eval_iter)['image']._numpy()  # pylint: disable=protected-access
-      #   rng, next_rng = jax.random.split(rng)
-      #   (_, _), eval_loss = self.eval_step_fn((next_rng, pstate), eval_batch)
-      #   eval_loss = flax.jax_utils.unreplicate(eval_loss)
-      #   self.logger.log_eval_loss(eval_loss.mean(), step)
+      if step % config.training.eval_freq == 0:
+        eval_batch = next(eval_iter)['image']._numpy()  # pylint: disable=protected-access
+        rng, *next_rng = jax.random.split(rng, num=jax.local_device_count() + 1)
+        next_rng = jnp.asarray(next_rng)
+        (_, _), eval_loss = self.eval_step_fn((next_rng, pstate), eval_batch)
+        eval_loss = flax.jax_utils.unreplicate(eval_loss)
+        self.logger.log_eval_loss(eval_loss.mean(), step)
       
       # Save a checkpoint periodically and generate samples if needed
-      # if step != 0 and step % config.training.snapshot_freq == 0 or step == num_train_steps:
-      #   # Save the checkpoint.
-      #     saved_state = flax.jax_utils.unreplicate(pstate)
-      #     saved_state = saved_state.replace(rng=rng)
-      #     self.save(saved_state, step, preemtion=False)
+      if step != 0 and step % config.training.snapshot_freq == 0 or step == num_train_steps:
+        # Save the checkpoint.
+          saved_state = flax.jax_utils.unreplicate(pstate)
+          saved_state = saved_state.replace(rng=rng)
+          self.save(saved_state, step, preemtion=False)
 
-      # rng, end_step_rng = jax.random.split(rng)
-      # if self.end_step is not None: self.end_step(num_train_steps, step, pstate, end_step_rng)
+      rng, end_step_rng = jax.random.split(rng)
+      if self.end_step is not None: self.end_step(num_train_steps, step, pstate, end_step_rng)
     return state
 
 
