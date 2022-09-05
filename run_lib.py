@@ -118,10 +118,19 @@ class GenModel:
     self.sde = sde_lib.get_sde(config.training.sde, config.model)
     self.model = mutils.get_model(config.model.name)(config=config)
     
-  def init_params(self, rng):
-    model, init_model_state, initial_params = mutils.init_model(rng, self.config)
+  def init_params(self, image_size, num_channels,  rng):
+    input_shape = (1, image_size, image_size, num_channels)
+    label_shape = input_shape[:1]
+    init_input = jnp.zeros(input_shape)
+    init_label = jnp.zeros(label_shape, dtype=jnp.int32)
+    params_rng, dropout_rng = jax.random.split(rng)
+    model = self.model
+    variables = model.init({'params': params_rng, 'dropout': dropout_rng}, init_input, init_label)
+    # Split state and params (which are updated by optimizer).
+    init_model_state, initial_params = variables.pop('params')
+    del variables # Delete variables to avoid wasting resources
     return init_model_state, initial_params
-
+    
   def get_score_fn(self, train=False, return_state=False):
     model_apply_fn = mutils.get_model_fn(self.model, train=train)
     score_apply_fn = mutils.get_score_fn(self.sde, model_apply_fn, continuous = self.continuous, return_state=return_state)
@@ -130,7 +139,8 @@ class GenModel:
       return score_apply_fn(params, states, images, labels, rng=rng)
     return scale_score_apply_fn
   
-  def get_sampling_fn(self, sampler_name, sampling_shape):
+  def get_sampling_fn(self, image_size, num_channels, sampler_name):
+    sampling_shape = (1, image_size, image_size, num_channels)
     score_apply_fn = self.get_score_fn(train=False, return_state=False)
     wrap_score_apply_fn = lambda s, x, t : score_apply_fn(s.params, s.model_states, x, t)
     
@@ -227,15 +237,14 @@ class Trainer(object):
   def fit(self, rng, state, train_ds, eval_ds):
     config = self.config
     state = self.load(state)
+    initial_step = int(state.step)
+    num_train_steps = config.training.n_iters
+    # Replicate the training state to run on multiple devices
     pstate = flax.jax_utils.replicate(state)
-    
+    del state
     
     train_iter, eval_iter = iter(train_ds), iter(eval_ds)
     
-    # Replicate the training state to run on multiple devices
-
-    initial_step = int(state.step)
-    num_train_steps = config.training.n_iters
     
     # pbar = tqdm(range(initial_step, num_train_steps + 1))
     # In case there are multiple hosts (e.g., TPU pods), only log to host 0
@@ -265,6 +274,7 @@ class Trainer(object):
           saved_state = flax.jax_utils.unreplicate(pstate)
           saved_state = saved_state.replace(rng=rng)
           self.save(saved_state, step, preemtion=True)
+          del saved_state
       
       # Report the loss on an evaluation dataset periodically
       if step % config.training.eval_freq == 0:
@@ -281,6 +291,7 @@ class Trainer(object):
           saved_state = flax.jax_utils.unreplicate(pstate)
           saved_state = saved_state.replace(rng=rng)
           self.save(saved_state, step, preemtion=False)
+          del saved_state
 
       rng, end_step_rng = jax.random.split(rng)
       if self.end_step is not None: self.end_step(num_train_steps, step, pstate, end_step_rng)
@@ -295,14 +306,14 @@ def train(config, workdir):
   rng = jax.random.PRNGKey(config.seed)
   rng, init_model_rng = jax.random.split(rng)
 
-  init_model_states, initial_params = gen_model.init_params(init_model_rng)
-
+  init_model_states, initial_params = gen_model.init_params(config.data.image_size, config.data.num_channels, init_model_rng)
   state = EMATrainState.create(apply_fn=gen_model.get_score_fn(train=True, return_state=True), 
                               params=initial_params, 
                               tx=tx,
                               ema_rate=config.model.ema_rate,
                               model_states=init_model_states,
                               rng=rng)
+  del init_model_states, initial_params
   
   train_step = functools.partial(jax.lax.scan, gen_model.get_step_fn(is_training=True))
   eval_step  = functools.partial(jax.lax.scan, gen_model.get_step_fn(is_training=False))
@@ -310,9 +321,7 @@ def train(config, workdir):
   eval_step = jax.jit(eval_step)
 
   # if config.training.snapshot_sampling:
-  sampling_shape = (config.training.batch_size, config.data.image_size,
-                    config.data.image_size, config.data.num_channels)
-  sampling_fn = gen_model.get_sampling_fn(config.sampling.method, sampling_shape)
+  sampling_fn = gen_model.get_sampling_fn(config.data.image_size, config.data.num_channels, config.sampling.method)
   sample_dir = os.path.join(workdir, "samples")
   tf.io.gfile.makedirs(sample_dir)
   def end_step_fn(num_train_steps, step_idx, pstate, rng):
