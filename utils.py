@@ -11,10 +11,7 @@ from flax.metrics import tensorboard
 from PIL import Image
 import tensorflow as tf
 from jax import numpy as jnp
-
-from models import utils as mutils
-import sampling
-import losses
+from tqdm import tqdm
 
 T = TypeVar("T")
 
@@ -34,6 +31,7 @@ class SimpleLogger:
     self.writer.scalar('training_loss', loss_val, step=step)
 
   def log_eval_loss(self, eval_loss_val, step):
+    logging.info("step: %d, eval_loss: %.5e" % (step, eval_loss_val))
     self.writer.scalar('eval_loss', eval_loss_val, step=step)
 
 
