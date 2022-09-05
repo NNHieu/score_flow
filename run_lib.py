@@ -1,5 +1,6 @@
 from lib2to3 import pytree
 import os
+from sched import scheduler
 from tkinter.tix import Tree
 from typing import Callable, Any
 
@@ -85,14 +86,24 @@ def get_dataset(config):
   return train_ds, eval_ds
 
 def get_optimizer(config, beta2=0.999):
+  grad_clip = config.optim.grad_clip
+  warmup = config.optim.warmup
+  lr = config.optim.lr
   if config.optim.optimizer == 'Adam':
-    optimizer = optax.adamw(learning_rate=config.optim.lr, b1=config.optim.beta1, b2=beta2, eps=config.optim.eps,
+    schedule = lr
+    if warmup > 0:
+      schedule = optax.linear_schedule(1./ warmup, lr, warmup)
+    opt = optax.chain(
+      optax.clip(grad_clip),
+      optax.adamw(learning_rate=schedule, b1=config.optim.beta1, b2=beta2, eps=config.optim.eps,
                                 weight_decay=config.optim.weight_decay)
+    )
+    
   else:
     raise NotImplementedError(
       f'Optimizer {config.optim.optimizer} not supported yet!')
 
-  return optimizer
+  return opt
 
 class GenModel:
   def __init__(self, config, continuous, smallest_time) -> None:
