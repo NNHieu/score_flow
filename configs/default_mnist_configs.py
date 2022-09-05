@@ -5,9 +5,9 @@ def get_default_configs():
   config = ml_collections.ConfigDict()
   # training
   config.training = training = ml_collections.ConfigDict()
-  config.training.batch_size = 16
+  config.training.batch_size = 128
   training.n_iters = 1300001
-  training.snapshot_freq = 10
+  training.snapshot_freq = 20000
   training.log_freq = 100
   training.eval_freq = 100
   ## store additional checkpoints for preemption in cloud computing environments
@@ -57,7 +57,7 @@ def get_default_configs():
   config.data = data = ml_collections.ConfigDict()
   data.dataset = 'MNIST'
   data.image_size = 32
-  data.random_flip = True
+  data.random_flip = False
   data.centered = False
   data.uniform_dequantization = False
   data.num_channels = 1

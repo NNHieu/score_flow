@@ -214,6 +214,16 @@ def get_dataset(config, additional_dim=None, uniform_dequantization=False, evalu
   eval_ds = create_dataset(dataset_builder, eval_split_name, False)
   return train_ds, eval_ds, dataset_builder
 
+# def get_mnist_datasets():
+#   """Load MNIST train and test datasets into memory."""
+#   ds_builder = tfds.builder('mnist')
+#   ds_builder.download_and_prepare()
+#   train_ds = tfds.as_numpy(ds_builder.as_dataset(split='train', batch_size=-1))
+#   test_ds = tfds.as_numpy(ds_builder.as_dataset(split='test', batch_size=-1))
+#   train_ds['image'] = jnp.float32(train_ds['image']) / 255.
+#   test_ds['image'] = jnp.float32(test_ds['image']) / 255.
+#   return train_ds, test_ds
+
 if __name__ == '__main__':
   from absl import app
   from absl import flags
