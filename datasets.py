@@ -90,7 +90,7 @@ def get_dataset(config, additional_dim=None, uniform_dequantization=False, evalu
   per_device_batch_size = batch_size // jax.device_count()
   # Reduce this when image resolution is too large and data pointer is stored
   shuffle_buffer_size = 10000
-  prefetch_size = tf.data.experimental.AUTOTUNE
+  prefetch_size = tf.data.AUTOTUNE
   num_epochs = None if not evaluation else 1
   # Create additional data dimension when jitting multiple steps together
   if additional_dim is None:
@@ -189,25 +189,59 @@ def get_dataset(config, additional_dim=None, uniform_dequantization=False, evalu
 
       return dict(image=img, label=d.get('label', None))
 
-  def create_dataset(dataset_builder, split):
+  def create_dataset(dataset_builder, split, is_train):
     dataset_options = tf.data.Options()
     dataset_options.experimental_optimization.map_parallelization = True
-    dataset_options.threading.private_threadpool_size = 48
+    dataset_options.threading.private_threadpool_size = 16
     dataset_options.threading.max_intra_op_parallelism = 1
     read_config = tfds.ReadConfig(options=dataset_options)
     if isinstance(dataset_builder, tfds.core.DatasetBuilder):
       dataset_builder.download_and_prepare()
       ds = dataset_builder.as_dataset(
-        split=split, shuffle_files=True, read_config=read_config)
+        split=split, shuffle_files=is_train, read_config=read_config)
     else:
       ds = dataset_builder.with_options(dataset_options)
     ds = ds.repeat(count=num_epochs)
-    ds = ds.shuffle(shuffle_buffer_size)
-    ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    if is_train: 
+      ds = ds.shuffle(shuffle_buffer_size)
+    # ds.interleave()
+    ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
     for batch_size in reversed(batch_dims):
       ds = ds.batch(batch_size, drop_remainder=True)
     return ds.prefetch(prefetch_size)
 
-  train_ds = create_dataset(dataset_builder, train_split_name)
-  eval_ds = create_dataset(dataset_builder, eval_split_name)
+  train_ds = create_dataset(dataset_builder, train_split_name, True)
+  eval_ds = create_dataset(dataset_builder, eval_split_name, False)
   return train_ds, eval_ds, dataset_builder
+
+if __name__ == '__main__':
+  from absl import app
+  from absl import flags
+  from ml_collections.config_flags import config_flags
+  import time
+
+  FLAGS = flags.FLAGS
+  config_flags.DEFINE_config_file(
+    "config", None, "Training configuration.", lock_config=True)
+  flags.mark_flags_as_required(["config"])
+
+
+  def benchmark(dataset, num_epochs=2):
+    start_time = time.perf_counter()
+    for epoch_num in range(num_epochs):
+        for i, sample in enumerate(dataset):
+          # Performing a training step
+          # time.sleep(0.01)
+          if i >= 10000: break
+    print("Execution time:", time.perf_counter() - start_time)
+  
+
+  def main(argv):
+    # Build data iterators
+    config = FLAGS.config
+    train_ds, eval_ds, _ = get_dataset(config,
+                                        additional_dim=config.training.n_jitted_steps,
+                                        uniform_dequantization=config.data.uniform_dequantization)
+    # train_ider = train_ds
+    benchmark(eval_ds, num_epochs=1)
+  app.run(main)
