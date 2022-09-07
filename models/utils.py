@@ -21,8 +21,8 @@ import flax
 import functools
 import jax.numpy as jnp
 
-import datasets
-import sde_lib
+# import src.datasets as datasets
+from src import sde_lib
 import jax
 import numpy as np
 from flax.training import checkpoints
@@ -88,14 +88,14 @@ def get_sigmas(config):
     sigmas: a jax numpy arrary of noise levels
   """
 
-  if config.training.sde.lower() == 'linearvesde':
+  if config.sde.name.lower() == 'linearvesde':
     sigmas = jnp.sqrt(jnp.linspace(config.model.sigma_max ** 2, config.model.sigma_min ** 2,
                                    config.model.num_scales))
   else:
     sigmas = jnp.exp(
       jnp.linspace(
-        jnp.log(config.model.sigma_max), jnp.log(config.model.sigma_min),
-        config.model.num_scales))
+        jnp.log(config.sde.sigma_max), jnp.log(config.sde.sigma_min),
+        config.sde.num_scales))
   return sigmas
 
 

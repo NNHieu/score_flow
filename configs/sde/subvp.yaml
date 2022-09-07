@@ -1,0 +1,16 @@
+name: 'subvpsde'
+continuous: True
+smallest_time: 1e-5
+num_scales: 1000
+beta_min: 0.1
+beta_max: 20.
+sigma_min: 0.01
+sigma_max: 50
+
+sampling:
+  n_steps_each: 1
+  noise_removal: True
+  probability_flow: False
+  snr: 0.16
+  smallest_time: 1e-3
+  method: 'ode'

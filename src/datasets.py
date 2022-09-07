@@ -15,23 +15,25 @@
 
 # pylint: skip-file
 """Return training and evaluation/test datasets from config files."""
+from typing import Any
 import jax
 import tensorflow as tf
 import tensorflow_datasets as tfds
+from src.utils import autoargs
 
 
-def get_data_scaler(config):
+def get_data_scaler(centered: bool):
   """Data normalizer. Assume data are always in [0, 1]."""
-  if config.data.centered:
+  if centered:
     # Rescale to [-1, 1]
     return lambda x: x * 2. - 1.
   else:
     return lambda x: x
 
 
-def get_data_inverse_scaler(config):
+def get_data_inverse_scaler(centered: bool):
   """Inverse data normalizer."""
-  if config.data.centered:
+  if centered:
     # Rescale [-1, 1] to [0, 1]
     return lambda x: (x + 1.) / 2.
   else:
@@ -224,17 +226,116 @@ def get_dataset(config, additional_dim=None, uniform_dequantization=False, evalu
 #   test_ds['image'] = jnp.float32(test_ds['image']) / 255.
 #   return train_ds, test_ds
 
+DS_NAMES = ['cifar10', 
+            'mnist', 
+            'svhn_cropped', 
+            # 'celeb_a', 
+            # 'downsampled_imagenet/32x32', 'downsampled_imagenet/64x64',
+            # 'FFHQ', 'CelebAHQ', 'LSUN'
+            ]
+
+class DataModule:
+  @autoargs(exclude=('additional_dim',))
+  def __init__(self, 
+               ds_name: Any, 
+               image_size: int, 
+               batch_size: int, 
+               random_flip: bool, 
+               centered: bool, 
+               num_channels: bool, 
+               uniform_dequantization: bool = False, 
+               additional_dim = None) -> None:
+    if self.ds_name in DS_NAMES:
+      self.dataset_builder = tfds.builder(self.ds_name)
+      self.train_split_name = 'train'
+      self.eval_split_name = 'test'
+    else:
+      raise NotImplementedError(f'Dataset {self.ds_name} not yet supported.')
+    
+    self.shuffle_buffer_size = 10000
+    self.prefetch_size = tf.data.AUTOTUNE
+    per_device_batch_size = self.batch_size // jax.device_count()
+    if additional_dim is None:
+      self.batch_dims = [jax.local_device_count(), per_device_batch_size]
+    else:
+      self.batch_dims = [jax.local_device_count(), additional_dim, per_device_batch_size]
+
+    self.scaler = get_data_scaler(centered)
+    self.inv_scaler = get_data_inverse_scaler(centered)
+
+
+  def _get_process_fn(self, uniform_dequantization=False, evaluation=False):
+    if self.ds_name in ('FFHQ', 'CelebAHQ', 'LSUN'):
+      def preprocess_fn(d):
+        sample = tf.io.parse_single_example(d, features={
+          'shape': tf.io.FixedLenFeature([3], tf.int64),
+          'data': tf.io.FixedLenFeature([], tf.string)})
+        data = tf.io.decode_raw(sample['data'], tf.uint8)
+        data = tf.reshape(data, sample['shape'])
+        data = tf.transpose(data, (1, 2, 0))
+        img = tf.image.convert_image_dtype(data, tf.float32)
+        if self.random_flip and not evaluation:
+          img = tf.image.random_flip_left_right(img)
+        if uniform_dequantization:
+          img = (tf.random.uniform(img.shape, dtype=tf.float32) + img * 255.) / 256.
+        return dict(image=img, label=None)
+    else:
+      def resize_op(img):
+        img = tf.image.convert_image_dtype(img, tf.float32)
+        return tf.image.resize(img, [self.image_size, self.image_size], antialias=True)
+
+      def preprocess_fn(d):
+        """Basic preprocessing function scales data to [0, 1) and randomly flips."""
+        img = resize_op(d['image'])
+        if self.random_flip and not evaluation:
+          img = tf.image.random_flip_left_right(img)
+        if uniform_dequantization:
+          # img = (tf.random.uniform(img.shape, dtype=tf.float32) + img * 255.) / 256.
+          img = (tf.random.uniform((self.image_size, self.image_size,
+                                    self.num_channels), dtype=tf.float32) + img * 255.) / 256.
+
+        return dict(image=img, label=d.get('label', None))
+    return preprocess_fn
+
+  def _create_dataset(self, preprocess_fn, is_train, 
+                      private_threadpool_size=48, 
+                      max_intra_op_parallelism=1):
+    # Create additional data dimension when jitting multiple steps together
+    split = self.train_split_name if is_train else self.eval_split_name
+    num_epochs = None if is_train else 1
+    dataset_options = tf.data.Options()
+    dataset_options.experimental_optimization.map_parallelization = True
+    dataset_options.threading.private_threadpool_size = private_threadpool_size
+    dataset_options.threading.max_intra_op_parallelism = max_intra_op_parallelism
+    read_config = tfds.ReadConfig(options=dataset_options)
+    if isinstance(self.dataset_builder, tfds.core.DatasetBuilder):
+      self.dataset_builder.download_and_prepare()
+      ds = self.dataset_builder.as_dataset(
+        split=split, shuffle_files=is_train, read_config=read_config)
+    else:
+      ds = self.dataset_builder.with_options(dataset_options)
+    ds = ds.repeat(count=num_epochs)
+    if is_train: 
+      ds = ds.shuffle(self.shuffle_buffer_size)
+    # ds.interleave()
+    ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
+    for batch_size in reversed(self.batch_dims):
+      ds = ds.batch(batch_size, drop_remainder=True)
+    return ds.prefetch(self.prefetch_size)
+
+  def train_ds(self):
+    preprocess_fn = self._get_process_fn(uniform_dequantization=self.uniform_dequantization, 
+                                          evaluation=True)
+    return self._create_dataset(preprocess_fn, is_train=True)
+
+  def test_ds(self):
+    preprocess_fn = self._get_process_fn(uniform_dequantization=self.uniform_dequantization, 
+                                          evaluation=False)
+    return self._create_dataset(preprocess_fn, is_train=False)
+    
+
 if __name__ == '__main__':
-  from absl import app
-  from absl import flags
-  from ml_collections.config_flags import config_flags
   import time
-
-  FLAGS = flags.FLAGS
-  config_flags.DEFINE_config_file(
-    "config", None, "Training configuration.", lock_config=True)
-  flags.mark_flags_as_required(["config"])
-
 
   def benchmark(dataset, num_epochs=2):
     start_time = time.perf_counter()
@@ -246,12 +347,7 @@ if __name__ == '__main__':
     print("Execution time:", time.perf_counter() - start_time)
   
 
-  def main(argv):
-    # Build data iterators
-    config = FLAGS.config
-    train_ds, eval_ds, _ = get_dataset(config,
-                                        additional_dim=config.training.n_jitted_steps,
-                                        uniform_dequantization=config.data.uniform_dequantization)
-    # train_ider = train_ds
-    benchmark(eval_ds, num_epochs=1)
-  app.run(main)
+  dm = DataModule('mnist', 32, 16, False, False, False, 1, 5)
+  train_ds = dm.train_ds()
+  benchmark(train_ds, num_epochs=1)
+  

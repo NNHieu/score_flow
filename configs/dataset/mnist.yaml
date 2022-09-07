@@ -1,0 +1,10 @@
+_target_: src.datasets.DataModule
+
+ds_name: mnist
+image_size: 32
+batch_size: 64
+random_flip: False
+centered: False
+num_channels: 1
+uniform_dequantization: False
+additional_dim: null

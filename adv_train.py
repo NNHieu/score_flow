@@ -23,7 +23,7 @@ import losses
 import sde_lib
 import utils
 from models import utils as mutils
-import src.datasets as datasets
+import datasets
 from absl import flags
 import sampling
 import flax.linen as nn
@@ -171,6 +171,60 @@ class GenModel:
       return (rng, state), loss
     
     return step_fn
+
+class Discriminator(nn.Module):
+  features: int = 64
+  dtype: Any = jnp.float32
+
+  @nn.compact
+  def __call__(self, x: jnp.ndarray, train: bool = True):
+    conv = functools.partial(nn.Conv, kernel_size=[4, 4], strides=[2, 2], padding='VALID',
+                   kernel_init=normal_init(0.02), dtype=self.dtype)
+    batch_norm = functools.partial(nn.BatchNorm, use_running_average=not train, axis=-1,
+                         scale_init=normal_init(0.02), dtype=self.dtype)
+        
+    x = conv(self.features)(x)
+    x = batch_norm()(x)
+    x = nn.leaky_relu(x, 0.2)
+    x = conv(self.features*2)(x)
+    x = batch_norm()(x)
+    x = nn.leaky_relu(x, 0.2)
+    x = conv(1)(x)
+    x = x.reshape((args['batch_size_p'], -1))
+    return x
+  
+  def get_train_step(self):
+    def loss_fn(params, generated_data: jnp.ndarray, real_data: jnp.ndarray):
+      logits_real, mutables = discriminator_state.apply_fn(
+          {'params': params, 'batch_stats': discriminator_state.batch_stats},
+          real_data, mutable=['batch_stats'])
+          
+      logits_generated, mutables = discriminator_state.apply_fn(
+          {'params': params, 'batch_stats': mutables['batch_stats']},
+          generated_data, mutable=['batch_stats'])
+      
+      real_loss = optax.sigmoid_binary_cross_entropy(
+          logits_real, args['true_label']).mean()
+      generated_loss = optax.sigmoid_binary_cross_entropy(
+          logits_generated, args['false_label']).mean()
+      
+      loss = (real_loss + generated_loss) / 2
+
+      return loss, mutables
+
+    # Critique real and generated data with the Discriminator.
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+    (loss, mutables), grads = grad_fn(discriminator_state.params)
+
+    # Average cross the devices.
+    grads = jax.lax.pmean(grads, axis_name='num_devices')
+    loss = jax.lax.pmean(loss, axis_name='num_devices')
+
+    # Update the discriminator through gradient descent.
+    new_discriminator_state = discriminator_state.apply_gradients(
+        grads=grads, batch_stats=mutables['batch_stats'])
+    
+    return new_discriminator_state, loss
 
 def get_dataset(config):
   # Build data iterators

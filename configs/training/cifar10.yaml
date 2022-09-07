@@ -1,0 +1,28 @@
+seed: 42
+n_iters: 1300001
+snapshot_freq: 5000
+log_freq: 100
+eval_freq: 100
+## store additional checkpoints for preemption in cloud computing environments
+snapshot_freq_for_preemption: 10000
+## produce samples at each snapshot.
+snapshot_sampling: True
+n_jitted_steps: 5
+
+optim:
+  _target_: src.actions.optax_chain
+  args:
+    - _target_: optax.clip
+      max_delta: 1.0
+    - _target_: optax.adamw
+      weight_decay: 0
+      b1: 0.9
+      b2: 0.999
+      eps: 1e-8
+      learning_rate: 
+        _target_: optax.linear_schedule
+        init_value: 0.0002
+        end_value: 2e-4
+        transition_steps: 5000
+    - _target_: optax.ema
+      decay: 0.9999

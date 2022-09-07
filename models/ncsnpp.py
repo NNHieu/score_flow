@@ -66,7 +66,7 @@ class NCSNpp(nn.Module):
     assert embedding_type in ['fourier', 'positional']
     combine_method = config.model.progressive_combine.lower()
     combiner = functools.partial(Combine, method=combine_method)
-    sde = config.training.sde
+    sde = config.sde.name
 
     # timestep/noise_level embedding; only for continuous training
     if embedding_type == 'fourier':
@@ -145,9 +145,9 @@ class NCSNpp(nn.Module):
     else:
       raise ValueError(f'resblock type {resblock_type} unrecognized.')
 
-    if not config.data.centered:
-      # If input data is in [0, 1]
-      x = 2 * x - 1.
+    # if not config.data.centered:
+    #   # If input data is in [0, 1]
+    #   x = 2 * x - 1.
 
     # Downsampling block
 
