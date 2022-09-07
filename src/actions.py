@@ -1,3 +1,5 @@
+from cProfile import label
+from curses import noecho
 import functools
 import os
 from typing import Any
@@ -13,11 +15,14 @@ from models import ncsnpp
 import models.utils as mutils
 from src import sde_lib
 from src.model import GenModel
-from src.trainer import Trainer, CustomTrainState
+from src.trainer.callbacks import SamplingCallback
+from src.trainer.trainer import Trainer, CustomTrainState
 import jax
 import flax
 import optax
 from flax.training import train_state
+from icecream import ic
+ic.configureOutput(includeContext=True)
 
 log = utils.get_logger(__name__)
 PRNGKey = Any
@@ -30,18 +35,38 @@ def train(config: OmegaConf, workdir):
     log.info(f"Current working directory : {workdir}")
     log.info(f"Random seed : {config.training.seed}")
     rng = jax.random.PRNGKey(config.training.seed)
-    log.info(f"Instantiating datamodule <{config.dataset._target_}>")
-    datamodule: datasets.DataModule = hydra.utils.instantiate(config.dataset)
-    train_ds, eval_ds = datamodule.train_ds(), datamodule.test_ds()
+    parallel_training = config.training.get("parallel", False)
+    assert not parallel_training or (parallel_training and config.training.get('jit', False))
 
-    # Init lightning model
+    n_jitted_steps = config.training.get('n_jitted_steps', None) if parallel_training else None
+    if n_jitted_steps is None or n_jitted_steps <= 1: 
+      n_jitted_steps = None
+    else:
+      # JIT multiple training steps together for faster training
+      # Must be divisible by the number of steps jitted together
+      assert config.training.log_freq % n_jitted_steps == 0 and \
+            config.training.snapshot_freq_for_preemption % n_jitted_steps == 0 and \
+            config.training.eval_freq % n_jitted_steps == 0 and \
+            config.training.snapshot_freq % n_jitted_steps == 0, "Missing logs or checkpoints!"
+
+    # Init data module
+    log.info(f"Instantiating datamodule <{config.dataset._target_}>")
+    multi_gpu = jax.local_device_count() if parallel_training else None
+    datamodule: datasets.DataModule = hydra.utils.instantiate(config.dataset, 
+                                        additional_dim=n_jitted_steps,
+                                        multi_gpu = multi_gpu)
+
+    # Init model
     log.info(f"Instantiating model <{config.model.name}>")
     score_model = mutils.get_model(config.model.name)(config=config)
     sde: sde_lib.SDE = sde_lib.get_sde(config.sde)
     gen_model = GenModel(sde, score_model, config.sde.continuous, config.dataset.image_size, config.dataset.num_channels)
     
+    # Init optimizer
+    log.info(f"Instantiating optimizer")
     tx = hydra.utils.instantiate(config.training.optim)
 
+    log.info(f"Instantiating model parameters and states")
     rng, init_model_rng = jax.random.split(rng)
     init_model_states, initial_params = gen_model.init_params(init_model_rng)
     
@@ -54,13 +79,53 @@ def train(config: OmegaConf, workdir):
     del init_model_states, initial_params
 
     log.info(f"Get train and eval step")
-    train_step = functools.partial(jax.lax.scan, gen_model.get_step_fn(config.loss, is_training=True, is_parallel=True))
-    eval_step  = functools.partial(jax.lax.scan, gen_model.get_step_fn(config.loss, is_training=False, is_parallel=True))
-    train_step = jax.jit(train_step)
-    eval_step = jax.jit(eval_step)
+    train_step = gen_model.get_step_fn(config.loss, is_training=True, is_parallel=parallel_training)
+    eval_step  = gen_model.get_step_fn(config.loss, is_training=False, is_parallel=parallel_training)
+    # if n_jitted_steps is not None:
+    #   log.info(f"Wrap scan functions")
+    #   train_step = functools.partial(jax.lax.scan, train_step)
+    #   eval_step  = functools.partial(jax.lax.scan, train_step)
 
-    trainer = Trainer(config, workdir, train_step, eval_step, end_step=lambda *args: None)
-    state = trainer.fit(rng, state, train_ds, eval_ds)
+    def unroll_wrapper(step_fn):
+      @functools.wraps(step_fn)
+      def wrapped_fn(rng, pstate, batch):
+        (_, pstate), loss = step_fn((rng, pstate), batch)
+        return pstate, loss
+      
+      return wrapped_fn
+    train_step = unroll_wrapper(train_step)
+    eval_step = unroll_wrapper(eval_step)
+
+    if parallel_training:
+      log.info(f"Wrap pmap step functions")
+      train_step = jax.pmap(train_step, axis_name='batch')
+      eval_step  = jax.pmap(eval_step, axis_name='batch')
+    elif config.training.get('jit'):
+      log.info(f"Wrap jit step functions")
+      train_step = jax.jit(train_step)
+      eval_step = jax.jit(eval_step)
+    
+    log.info(f"Setup sampling callback")
+    sampling_fn = gen_model.get_sampling_fn(config.sde.sampling.method, 
+                                            config.sde.sampling.noise_removal, 
+                                            datamodule.inv_scaler)
+    sample_dir = os.path.join(workdir, "samples")
+    rng, sampling_rng = jax.random.split(rng)
+    sampling_rng = jax.random.fold_in(sampling_rng, jax.process_index())
+    callbacks = [
+      SamplingCallback(sampling_fn, sample_dir, sampling_rng)
+    ]
+
+    trainer = Trainer(workdir, 
+                      train_step, eval_step, 
+                      config.training.n_iters,
+                      config.training.eval_freq,
+                      config.training.snapshot_freq_for_preemption,
+                      config.training.snapshot_freq,
+                      is_multigpu=parallel_training, 
+                      callbacks=callbacks,
+                      restore_checkpoint_after_setup=True)
+    state = trainer.fit(rng, state, datamodule)
 
 
 

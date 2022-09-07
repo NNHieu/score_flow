@@ -199,12 +199,15 @@ def get_model_fn(model, train=False) -> Callable[[jnp.ndarray, jnp.ndarray, Opti
     A model function.
   """
 
-  if not train:
-    apply_fn = lambda params, states, x, labels, rng=None: (model.apply({'params': params, **states}, x, labels, train=False, mutable=False), states)
-  else:
+  if train:
     apply_fn = lambda params, states, x, labels, rng: model.apply({'params': params, **states}, 
                                                                    x, labels, train=True, 
                                                                    mutable=list(states.keys()), rngs={'dropout': rng})
+  else:
+    apply_fn = lambda params, states, x, labels, rng=None: (model.apply({'params': params, **states}, 
+                                                                        x, labels, 
+                                                                        train=False, mutable=False), 
+                                                            states)
 
   return apply_fn
 

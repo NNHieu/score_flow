@@ -1,9 +1,9 @@
 _target_: src.datasets.DataModule
 
-ds_name: mnist
+ds_name: cifar10
 image_size: 32
-batch_size: 32
-random_flip: False
+batch_size: 16
+random_flip: True
 centered: False
-num_channels: 1
+num_channels: 3
 uniform_dequantization: False

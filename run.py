@@ -28,7 +28,15 @@ def main(config: DictConfig):
     
     # Pretty print config using Rich library
     if config.get("print_config"):
-        utils.print_config(config, config.rwd, resolve=True)
+        utils.print_config(config, config.rwd, resolve=True, fields=(
+            "training",
+            "dataset",
+            "model",
+            "loss",
+            "sde",
+            "logger",
+            "name",
+        ))
 
     # if config.get("only_test"):
     #     return test(config)

@@ -9,7 +9,7 @@ from utils import batch_mul
 class SDE(abc.ABC):
   """SDE abstract class. Functions are designed for a mini-batch of inputs."""
 
-  def __init__(self, N, smallest_time):
+  def __init__(self, N: int, smallest_time: float):
     """Construct an SDE.
 
     Args:
@@ -355,13 +355,13 @@ class VESDE(SDE):
 
 def get_sde(sde_config):
   if sde_config.name.lower() == 'vpsde':
-    sde = VPSDE(beta_min=sde_config.beta_min, beta_max=sde_config.beta_max, N=sde_config.num_scales, smallest_time=sde_config.name)
+    sde = VPSDE(beta_min=sde_config.beta_min, beta_max=sde_config.beta_max, N=sde_config.num_scales, smallest_time=sde_config.smallest_time)
   elif sde_config.name.lower() == 'subvpsde':
-    sde = subVPSDE(beta_min=sde_config.beta_min, beta_max=sde_config.beta_max, N=sde_config.num_scales, smallest_time=sde_config.name)
+    sde = subVPSDE(beta_min=sde_config.beta_min, beta_max=sde_config.beta_max, N=sde_config.num_scales, smallest_time=sde_config.smallest_time)
   elif sde_config.name.lower() == 'vesde':
-    sde = VESDE(sigma_min=sde_config.sigma_min, sigma_max=sde_config.sigma_max, N=sde_config.num_scales, smallest_time=sde_config.name)
+    sde = VESDE(sigma_min=sde_config.sigma_min, sigma_max=sde_config.sigma_max, N=sde_config.num_scales, smallest_time=sde_config.smallest_time)
   elif sde_config.name.lower() == 'linearvesde':
-    sde = VESDE(sigma_min=sde_config.sigma_min, sigma_max=sde_config.sigma_max, N=sde_config.num_scales, smallest_time=sde_config.name,
+    sde = VESDE(sigma_min=sde_config.sigma_min, sigma_max=sde_config.sigma_max, N=sde_config.num_scales, smallest_time=sde_config.smallest_time,
                         linear=True)
   else:
     raise NotImplementedError(f"SDE {sde_config.name} unknown.")

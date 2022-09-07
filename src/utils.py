@@ -86,7 +86,7 @@ def print_config(
     config: DictConfig,
     output_dir: os.PathLike,
     fields: Sequence[str] = (
-        "trainer",
+        "training",
         "model",
         "dataset",
         "callbacks",

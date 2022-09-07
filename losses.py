@@ -4,12 +4,11 @@ import jax.numpy as jnp
 import jax.random as jrnd
 import models.utils as mutils
 from utils import batch_mul
-
+from icecream import ic
 
 def get_sde_loss_fn(sde, score_apply_fn, is_reduce_mean=True, likelihood_weighting=True,
                     importance_weighting=True, eps=1e-5):
   reduce_op = jnp.mean if is_reduce_mean else lambda *args, **kwargs: 0.5 * jnp.sum(*args, **kwargs)
-
   def importance_weight_loss(data, t, z, score, std):
     losses = jnp.square(batch_mul(score, std) + z)
     losses = reduce_op(losses.reshape((losses.shape[0], -1)), axis=-1)

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -38,19 +38,19 @@ class GenModel:
     score_apply_fn = mutils.get_score_fn(self.sde, model_apply_fn, continuous = self.continuous, return_state=return_state)
     return score_apply_fn
   
-  def get_sampling_fn(self, sampler_config):
+  def get_sampling_fn(self, method, noise_removal: bool, data_inv_scaler: Callable):
     score_apply_fn = self.get_score_fn(train=False, return_state=False)
     wrap_score_apply_fn = lambda s, x, t : score_apply_fn(s.params, s.model_states, x, t)
     
-    if sampler_config.method.lower() == 'ode':
+    if method.lower() == 'ode':
       sampling_fn = sampling.get_ode_sampler(sde=self.sde,
                                   score_apply_fn=wrap_score_apply_fn,
                                   shape=self.input_shape,
-                                  inverse_scaler=self.data_inv_scaler,
-                                  denoise=sampler_config.noise_removal,
-                                  eps=self.smallest_time)
+                                  inverse_scaler=data_inv_scaler,
+                                  denoise=noise_removal,
+                                  eps=self.sde.smallest_time)
     else:
-      raise ValueError(f"Sampler name {sampler_config.method} unknown.")
+      raise ValueError(f"Sampler name {method} unknown.")
     return sampling_fn
 
   def get_step_fn(self, loss_config, is_training, is_parallel=False, **kwargs):
@@ -58,10 +58,12 @@ class GenModel:
     likelihood_weighting = loss_config.likelihood_weighting
     importance_weighting = loss_config.importance_weighting
     smallest_time = self.sde.smallest_time
-
-    loss_fn = losses.get_loss_fn(self.sde, self.get_score_fn(train=is_training, return_state=True), 
-                                 is_reduce_mean=reduce_mean, likelihood_weighting=likelihood_weighting, 
-                                 importance_weighting=importance_weighting, smallest_time=smallest_time)
+    score_fn = self.get_score_fn(train=is_training, return_state=True)
+    loss_fn = losses.get_loss_fn(self.sde, score_fn, 
+                                 is_reduce_mean=reduce_mean, 
+                                 likelihood_weighting=likelihood_weighting, 
+                                 importance_weighting=importance_weighting, 
+                                 smallest_time=smallest_time)
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
     def step_fn(carry_state, batch):
@@ -86,10 +88,9 @@ class GenModel:
       if is_training:
         (loss, new_model_states), grads = grad_fn(params, model_states, batch, step_rng)
         if is_parallel:
-          grad = jax.lax.pmean(grad, axis_name='batch')
+          grads = jax.lax.pmean(grads, axis_name='batch')
         state = state.update_model(new_model_states=new_model_states, grads=grads)
       else:
         loss, _ = loss_fn(params, model_states, batch, step_rng)
-      
       return (rng, state), loss
     return step_fn

@@ -15,6 +15,7 @@
 
 # pylint: skip-file
 """Return training and evaluation/test datasets from config files."""
+from audioop import add
 from typing import Any
 import jax
 import tensorflow as tf
@@ -244,7 +245,8 @@ class DataModule:
                centered: bool, 
                num_channels: bool, 
                uniform_dequantization: bool = False, 
-               additional_dim = None) -> None:
+               additional_dim = None,
+               multi_gpu = None) -> None:
     if self.ds_name in DS_NAMES:
       self.dataset_builder = tfds.builder(self.ds_name)
       self.train_split_name = 'train'
@@ -254,11 +256,17 @@ class DataModule:
     
     self.shuffle_buffer_size = 10000
     self.prefetch_size = tf.data.AUTOTUNE
-    per_device_batch_size = self.batch_size // jax.device_count()
-    if additional_dim is None:
-      self.batch_dims = [jax.local_device_count(), per_device_batch_size]
+    per_device_batch_size = self.batch_size
+    self.batch_dims = []
+    if multi_gpu is not None and multi_gpu > 0:
+      self.batch_dims.append(multi_gpu)
+      per_device_batch_size = self.batch_size // multi_gpu
+    if additional_dim is not None and additional_dim > 0:
+      self.batch_dims.append(additional_dim)
+      self.additional_dim = additional_dim
     else:
-      self.batch_dims = [jax.local_device_count(), additional_dim, per_device_batch_size]
+      self.additional_dim = None
+    self.batch_dims.append(per_device_batch_size)
 
     self.scaler = get_data_scaler(centered)
     self.inv_scaler = get_data_inverse_scaler(centered)
