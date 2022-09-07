@@ -193,26 +193,26 @@ class Trainer(object):
       batch = next(train_iter)['image']._numpy()
       # TODO: consider move this scale step to preprocess 
       batch = jax.tree_map(lambda x: datamodule.scaler(x), batch)
-      ic(batch.shape)
+      # ic(batch.shape)
       pstate, loss, rng = self._train_step(pstate, batch, rng)
       self.log('trai_loss', loss, step)
       del batch
       
-      if step != 0 and step % self.snapshot_freq_for_preemption == 0:
-        self.save(pstate, rng, step, preemtion=True)
+      # if step != 0 and step % self.snapshot_freq_for_preemption == 0:
+      #   self.save(pstate, rng, step, preemtion=True)
       
       # Report the loss on an evaluation dataset periodically
       if step % self.eval_freq == 0:
         eval_batch = next(eval_iter)['image']._numpy()  # pylint: disable=protected-access
         # TODO: consider move this scale step to preprocess 
         eval_batch = jax.tree_map(lambda x: datamodule.scaler(x), eval_batch)
-        _, eval_loss, rng = self._train_step(pstate, eval_batch, rng)
+        pstate, eval_loss, rng = self._eval_step(pstate, eval_batch, rng)
         self.log("eval_loss", eval_loss.mean(), step)
         del eval_batch
 
       # Save a checkpoint periodically and generate samples if needed
-      if step != 0 and step % self.snapshot_freq == 0 or step == num_train_steps:
-        self.save(pstate, rng, step, preemtion=False)
+      # if step != 0 and step % self.snapshot_freq == 0 or step == num_train_steps:
+      #   self.save(pstate, rng, step, preemtion=False)
     
     # hook
     # self._call_callback_hooks("on_fit_end", self)

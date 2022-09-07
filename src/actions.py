@@ -79,31 +79,45 @@ def train(config: OmegaConf, workdir):
     del init_model_states, initial_params
 
     log.info(f"Get train and eval step")
-    train_step = gen_model.get_step_fn(config.loss, is_training=True, is_parallel=parallel_training)
-    eval_step  = gen_model.get_step_fn(config.loss, is_training=False, is_parallel=parallel_training)
+    def update_params_fn(params, opt_state, grads):
+      updates, opt_state = tx.update(grads, opt_state, params)
+      params = optax.apply_updates(params, updates)
+      return params, opt_state
+    train_step = gen_model.get_step_fn(update_params_fn, config.loss, is_training=True, is_parallel=parallel_training)
+    eval_step  = gen_model.get_step_fn(None, config.loss, is_training=False, is_parallel=parallel_training)
     # if n_jitted_steps is not None:
     #   log.info(f"Wrap scan functions")
     #   train_step = functools.partial(jax.lax.scan, train_step)
     #   eval_step  = functools.partial(jax.lax.scan, train_step)
 
+    if parallel_training:
+      log.info(f"Wrap pmap step functions")
+      train_step = jax.pmap(train_step, axis_name='batch', donate_argnums=(0, 1, 2, 3))
+      eval_step  = jax.pmap(eval_step, axis_name='batch', donate_argnums=(0, 1, 2, 3))
+    elif config.training.get('jit'):
+      log.info(f"Wrap jit step functions")
+      train_step = jax.jit(train_step, donate_argnums=(0, 1, 2, 3))
+      eval_step = jax.jit(eval_step, donate_argnums=(0, 1, 2, 3))
+
     def unroll_wrapper(step_fn):
       @functools.wraps(step_fn)
       def wrapped_fn(rng, pstate, batch):
-        (_, pstate), loss = step_fn((rng, pstate), batch)
+        params, model_state, opt_state = pstate.params, pstate.model_states, pstate.opt_state
+        rng, params, model_state, opt_state, loss = step_fn(rng, params, model_state, opt_state, batch)
+        pstate = pstate.replace(
+          step=pstate.step + 1,
+          params=params,
+          opt_state=opt_state,
+          model_states=model_state,
+        )
         return pstate, loss
       
       return wrapped_fn
+
     train_step = unroll_wrapper(train_step)
     eval_step = unroll_wrapper(eval_step)
 
-    if parallel_training:
-      log.info(f"Wrap pmap step functions")
-      train_step = jax.pmap(train_step, axis_name='batch')
-      eval_step  = jax.pmap(eval_step, axis_name='batch')
-    elif config.training.get('jit'):
-      log.info(f"Wrap jit step functions")
-      train_step = jax.jit(train_step)
-      eval_step = jax.jit(eval_step)
+    
     
     log.info(f"Setup sampling callback")
     sampling_fn = gen_model.get_sampling_fn(config.sde.sampling.method, 

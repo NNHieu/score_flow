@@ -53,7 +53,7 @@ class GenModel:
       raise ValueError(f"Sampler name {method} unknown.")
     return sampling_fn
 
-  def get_step_fn(self, loss_config, is_training, is_parallel=False, **kwargs):
+  def get_step_fn(self, update_params_fn, loss_config, is_training, is_parallel=False, **kwargs):
     reduce_mean = loss_config.reduce_mean
     likelihood_weighting = loss_config.likelihood_weighting
     importance_weighting = loss_config.importance_weighting
@@ -66,7 +66,7 @@ class GenModel:
                                  smallest_time=smallest_time)
     grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
-    def step_fn(carry_state, batch):
+    def step_fn(rng, params, model_state, opt_state, batch):
       """Running one step of training or evaluation.
 
       This function will undergo `jax.lax.scan` so that multiple steps can be pmapped and jit-compiled together
@@ -80,17 +80,13 @@ class GenModel:
         new_carry_state: The updated tuple of `carry_state`.
         loss: The average loss value of this state.
       """
-      rng = carry_state[0]
-      state = carry_state[1]
       rng, step_rng = jax.random.split(rng)
-      params = state.params
-      model_states = state.model_states
       if is_training:
-        (loss, new_model_states), grads = grad_fn(params, model_states, batch, step_rng)
+        (loss, model_state), grads = grad_fn(params, model_state, batch, step_rng)
         if is_parallel:
           grads = jax.lax.pmean(grads, axis_name='batch')
-        state = state.update_model(new_model_states=new_model_states, grads=grads)
+        params, opt_state = update_params_fn(params, opt_state, grads)
       else:
-        loss, _ = loss_fn(params, model_states, batch, step_rng)
-      return (rng, state), loss
+        loss, _ = loss_fn(params, model_state, batch, step_rng)
+      return rng, params, model_state, opt_state, loss
     return step_fn
