@@ -7,7 +7,7 @@ defaults:
   - override /mode: exp.yaml
   - override /dataset: mnist.yaml
   - override /training: default_cifar10.yaml
-  - override /model: cifarnet.yaml
+  - override /model: mnistnet.yaml
   - override /sde: subvp.yaml
   - override /loss: default.yaml
   # - override /callbacks: null

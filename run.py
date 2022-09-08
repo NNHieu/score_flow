@@ -42,8 +42,10 @@ def main(config: DictConfig):
     #     return test(config)
     # # Train model
     # return train(config)
-
-    return train(config, config.rwd)
+    workdir = config.rwd
+    if config.get("experiment_mode"):
+      workdir = config.exp_dir
+    return train(config, workdir)
 
 
 

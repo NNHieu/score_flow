@@ -38,14 +38,15 @@ class GenModel:
     score_apply_fn = mutils.get_score_fn(self.sde, model_apply_fn, continuous = self.continuous, return_state=return_state)
     return score_apply_fn
   
-  def get_sampling_fn(self, method, noise_removal: bool, data_inv_scaler: Callable):
+  def get_sampling_fn(self, method, noise_removal: bool, data_inv_scaler: Callable, num_sample_per_device: int):
+    sample_shape = (num_sample_per_device, *self.input_shape[1:])
     score_apply_fn = self.get_score_fn(train=False, return_state=False)
     wrap_score_apply_fn = lambda s, x, t : score_apply_fn(s.params, s.model_states, x, t)
     
     if method.lower() == 'ode':
       sampling_fn = sampling.get_ode_sampler(sde=self.sde,
                                   score_apply_fn=wrap_score_apply_fn,
-                                  shape=self.input_shape,
+                                  shape=sample_shape,
                                   inverse_scaler=data_inv_scaler,
                                   denoise=noise_removal,
                                   eps=self.sde.smallest_time)

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import warnings
 from typing import Any, Callable, List, Optional, Sequence
 from functools import wraps
@@ -21,6 +22,42 @@ def rank_zero_only(fn: Callable) -> Callable:
         return None
 
     return wrapped_fn
+    
+def task_wrapper(task_func: Callable) -> Callable:
+    """Optional decorator that wraps the task function in extra utilities.
+    Makes multirun more resistant to failure.
+    Utilities:
+    - Calling the `utils.extras()` before the task is started
+    - Calling the `utils.close_loggers()` after the task is finished
+    - Logging the exception if occurs
+    - Logging the task total execution time
+    - Logging the output dir
+    """
+
+    def wrap(cfg: DictConfig):
+
+        # apply extra utilities
+        extras(cfg)
+
+        # execute the task
+        try:
+            start_time = time.time()
+            metric_dict, object_dict = task_func(cfg=cfg)
+        except Exception as ex:
+            log.exception("")  # save exception to `.log` file
+            raise ex
+        finally:
+            path = Path(cfg.paths.output_dir, "exec_time.log")
+            content = f"'{cfg.task_name}' execution time: {time.time() - start_time} (s)"
+            save_file(path, content)  # save task execution time (even if exception occurs)
+            close_loggers()  # close loggers (even if exception occurs so multirun won't fail)
+
+        log.info(f"Output dir: {cfg.paths.output_dir}")
+
+        return metric_dict, object_dict
+
+    return wrap
+
 
 def get_logger(name=__name__) -> logging.Logger:
     """Initializes multi-GPU-friendly python command line logger."""

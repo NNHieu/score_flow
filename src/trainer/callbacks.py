@@ -1,4 +1,5 @@
 from typing import Any, Callable, Optional
+
 from .trainer import CustomTrainState, PRNGKey, Trainer
 
 import os
@@ -7,6 +8,9 @@ import jax
 import jax.numpy as jnp
 import tensorflow as tf
 import utils
+from src import utils as sutils
+
+log = sutils.get_logger(__name__)
 
 STEP_OUTPUT = Any
 
@@ -79,7 +83,7 @@ class SamplingCallback(Callback):
       sample_rng = jnp.asarray(sample_rng)
       sample, n = self.sampling_fn(sample_rng, pstate)
       this_sample_dir = os.path.join(
-          self.sample_dir, "iter_{}_host_{}".format(step_idx, jax.process_index()))
+          self.sample_dir, "iter_{}_host_{}".format(trainer.global_step, jax.process_index()))
       tf.io.gfile.makedirs(this_sample_dir)
       image_grid = sample.reshape((-1, *sample.shape[2:]))
       nrow = int(np.sqrt(image_grid.shape[0]))
@@ -90,5 +94,6 @@ class SamplingCallback(Callback):
       with tf.io.gfile.GFile(
           os.path.join(this_sample_dir, "sample.png"), "wb") as fout:
         utils.save_image(image_grid, fout, nrow=nrow, padding=2)
+      log.info(f'Saved sampling at {this_sample_dir}')
     else:
-        pass
+      raise NotImplementedError

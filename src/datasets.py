@@ -256,17 +256,17 @@ class DataModule:
     
     self.shuffle_buffer_size = 10000
     self.prefetch_size = tf.data.AUTOTUNE
-    per_device_batch_size = self.batch_size
+    self.per_device_batch_size = self.batch_size
     self.batch_dims = []
     if multi_gpu is not None and multi_gpu > 0:
       self.batch_dims.append(multi_gpu)
-      per_device_batch_size = self.batch_size // multi_gpu
+      self.per_device_batch_size = self.batch_size // multi_gpu
     if additional_dim is not None and additional_dim > 0:
       self.batch_dims.append(additional_dim)
       self.additional_dim = additional_dim
     else:
       self.additional_dim = None
-    self.batch_dims.append(per_device_batch_size)
+    self.batch_dims.append(self.per_device_batch_size)
 
     self.scaler = get_data_scaler(centered)
     self.inv_scaler = get_data_inverse_scaler(centered)
@@ -307,10 +307,11 @@ class DataModule:
 
   def _create_dataset(self, preprocess_fn, is_train, 
                       private_threadpool_size=48, 
-                      max_intra_op_parallelism=1):
+                      max_intra_op_parallelism=1,
+                      num_epochs=None):
     # Create additional data dimension when jitting multiple steps together
     split = self.train_split_name if is_train else self.eval_split_name
-    num_epochs = None if is_train else 1
+    # num_epochs = None if is_train else 1
     dataset_options = tf.data.Options()
     dataset_options.experimental_optimization.map_parallelization = True
     dataset_options.threading.private_threadpool_size = private_threadpool_size

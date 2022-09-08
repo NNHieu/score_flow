@@ -1,29 +1,58 @@
-from cProfile import label
-from curses import noecho
-import functools
+import pyrootutils
+
+root = pyrootutils.setup_root(
+    search_from=__file__,
+    indicator=[".git", "pyproject.toml"],
+    pythonpath=True,
+    dotenv=True,
+)
+
+# ------------------------------------------------------------------------------------ #
+# `pyrootutils.setup_root(...)` is recommended at the top of each start file
+# to make the environment more robust and consistent
+#
+# the line above searches for ".git" or "pyproject.toml" in present and parent dirs
+# to determine the project root dir
+#
+# adds root dir to the PYTHONPATH (if `pythonpath=True`)
+# so this file can be run from any place without installing project as a package
+#
+# sets PROJECT_ROOT environment variable which is used in "configs/paths/default.yaml"
+# this makes all paths relative to the project root
+#
+# additionally loads environment variables from ".env" file (if `dotenv=True`)
+#
+# you can get away without using `pyrootutils.setup_root(...)` if you:
+# 1. move this file to the project root dir or install project as a package
+# 2. modify paths in "configs/paths/default.yaml" to not use PROJECT_ROOT
+# 3. always run this file from the project root dir
+#
+# https://github.com/ashleve/pyrootutils
+# ------------------------------------------------------------------------------------ #
+
+from typing import Optional, Any
+
 import os
-from typing import Any
+import functools
+
 import hydra
-from hydra.utils import get_original_cwd, to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
-from src import utils
-from src import datasets
+import jax
+import optax
 
+from src import datasets
 # Keep the import below for registering all model definitions
-from models import ncsnpp
 import models.utils as mutils
 from src import sde_lib
 from src.model import GenModel
 from src.trainer.callbacks import SamplingCallback
 from src.trainer.trainer import Trainer, CustomTrainState
-import jax
-import flax
-import optax
-from flax.training import train_state
+
 from icecream import ic
 ic.configureOutput(includeContext=True)
 
+from src import utils
 log = utils.get_logger(__name__)
 PRNGKey = Any
 
@@ -130,5 +159,28 @@ def train(config: OmegaConf, workdir):
     ic.disable()
     state = trainer.fit(state, datamodule)
 
+@hydra.main(version_base="1.2", config_path=root / "configs", config_name="train.yaml")
+def main(config: DictConfig) -> Optional[float]:
+    import tensorflow as tf
+    tf.config.experimental.set_visible_devices([], "GPU")
+    os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 
+    # Pretty print config using Rich library
+    if config.get("print_config"):
+        utils.print_config(config, config.rwd, resolve=True, fields=(
+            "training",
+            "dataset",
+            "model",
+            "loss",
+            "sde",
+            "logger",
+            "name",
+        ))
 
+    workdir = config.rwd
+    if config.get("experiment_mode"):
+      workdir = config.exp_dir
+    return train(config, workdir)
+
+if __name__ == "__main__":
+    main()

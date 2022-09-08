@@ -1,0 +1,5 @@
+hydra-core
+hydra-colorlog
+python-dotenv
+icecream
+pyrootutils == 1.0.4
