@@ -10,7 +10,7 @@ import tensorflow as tf
 import utils
 from src import utils as sutils
 
-log = sutils.get_logger(__name__)
+log = sutils.get_pylogger(__name__)
 
 STEP_OUTPUT = Any
 

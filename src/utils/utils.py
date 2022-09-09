@@ -1,27 +1,20 @@
-import logging
 import os
+from pathlib import Path
+from importlib.util import find_spec
 import time
 import warnings
 from typing import Any, Callable, List, Optional, Sequence
 from functools import wraps
 import inspect
-import jax
 
 import rich.syntax
 import rich.tree
 from omegaconf import DictConfig, OmegaConf
 
-def rank_zero_only(fn: Callable) -> Callable:
-    """Function that can be used as a decorator to enable a function/method being called only on global rank 0."""
+from .rank_zero import rank_zero_only
+from src.utils import pylogger, rich_utils
 
-    @wraps(fn)
-    def wrapped_fn(*args: Any, **kwargs: Any) -> Optional[Any]:
-        # if rank_zero_only.rank == 0:
-        if jax.process_index() == 0:
-            return fn(*args, **kwargs)
-        return None
-
-    return wrapped_fn
+log = pylogger.get_pylogger(__name__)
     
 def task_wrapper(task_func: Callable) -> Callable:
     """Optional decorator that wraps the task function in extra utilities.
@@ -58,64 +51,41 @@ def task_wrapper(task_func: Callable) -> Callable:
 
     return wrap
 
-
-def get_logger(name=__name__) -> logging.Logger:
-    """Initializes multi-GPU-friendly python command line logger."""
-
-    logger = logging.getLogger(name)
-
-    # this ensures all logging levels get marked with the rank zero decorator
-    # otherwise logs would get multiplied for each GPU process in multi-GPU setup
-    for level in (
-        "debug",
-        "info",
-        "warning",
-        "error",
-        "exception",
-        "fatal",
-        "critical",
-    ):
-        setattr(logger, level, rank_zero_only(getattr(logger, level)))
-
-    return logger
+@rank_zero_only
+def save_file(path: str, content: str) -> None:
+    """Save file in rank zero mode (only on one process in multi-GPU setup)."""
+    with open(path, "w+") as file:
+        file.write(content)
 
 
-def extras(config: DictConfig) -> None:
-    """A couple of optional utilities, controlled by main config file:
-    - disabling warnings
-    - forcing debug friendly configuration
-    - verifying experiment name is set when running in experiment mode
-    Modifies DictConfig in place.
-    Args:
-        config (DictConfig): Configuration composed by Hydra.
+def extras(cfg: DictConfig) -> None:
+    """Applies optional utilities before the task is started.
+    Utilities:
+    - Ignoring python warnings
+    - Setting tags from command line
+    - Rich config printing
     """
 
-    log = get_logger(__name__)
+    # return if no `extras` config
+    if not cfg.get("extras"):
+      log.warning("Extras config not found! <cfg.extras=null>")
+      return
 
-    # disable python warnings if <config.ignore_warnings=True>
-    if config.get("ignore_warnings"):
-        log.info("Disabling python warnings! <config.ignore_warnings=True>")
+    # disable python warnings
+    if cfg.extras.get("ignore_warnings"):
+        log.info("Disabling python warnings! <cfg.extras.ignore_warnings=True>")
         warnings.filterwarnings("ignore")
 
-    # verify experiment name is set when running in experiment mode
-    if config.get("experiment_mode") and not config.get("name"):
-        log.info(
-            "Running in experiment mode without the experiment name specified! "
-            "Use `python run.py mode=exp name=experiment_name`"
-        )
-        log.info("Exiting...")
-        exit()
+    # prompt user to input tags from command line if none are provided in the config
+    # if cfg.extras.get("enforce_tags"):
+    #     log.info("Enforcing tags! <cfg.extras.enforce_tags=True>")
+    #     rich_utils.enforce_tags(cfg, save_to_file=True)
 
-    # force debugger friendly configuration if <config.trainer.fast_dev_run=True>
-    # debuggers don't like GPUs and multiprocessing
-    if config.trainer.get("fast_dev_run"):
-        log.info("Forcing debugger friendly configuration! <config.trainer.fast_dev_run=True>")
-        if config.trainer.get("gpus"):
-            config.trainer.gpus = 0
-        if config.datamodule.get("pin_memory"):
-            config.datamodule.pin_memory = False
-        if config.datamodule.get("num_workers"):
-            config.datamodule.num_workers = 0
+    # pretty print config tree using Rich library
+    if cfg.extras.get("print_config"):
+        log.info("Printing config tree with Rich! <cfg.extras.print_config=True>")
+        rich_utils.print_config_tree(cfg, resolve=True, save_to_file=True)
+
 
 
 @rank_zero_only
@@ -240,3 +210,15 @@ def autoargs(*include, **kwargs):
             return func(self, *args, **kwargs)
         return wrapper
     return _autoargs
+
+def close_loggers() -> None:
+    """Makes sure all loggers closed properly (prevents logging failure during multirun)."""
+
+    log.info("Closing loggers...")
+
+    if find_spec("wandb"):  # if wandb is installed
+        import wandb
+
+        if wandb.run:
+            log.info("Closing wandb!")
+            wandb.finish()

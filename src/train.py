@@ -53,7 +53,7 @@ from icecream import ic
 ic.configureOutput(includeContext=True)
 
 from src import utils
-log = utils.get_logger(__name__)
+log = utils.get_pylogger(__name__)
 PRNGKey = Any
 
 def optax_chain(args):

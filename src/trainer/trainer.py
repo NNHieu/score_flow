@@ -18,7 +18,7 @@ import src.datasets as datasets
 from src import utils as sutils
 from src.trainer import states
 
-log = sutils.get_logger(__name__)
+log = sutils.get_pylogger(__name__)
 
 from icecream import ic
 ic.configureOutput(includeContext=True)

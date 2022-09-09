@@ -5,11 +5,11 @@
 
 defaults:
   - override /mode: exp.yaml
-  - override /dataset: mnist.yaml
-  - override /training: default_cifar10.yaml
-  - override /model: mnistnet.yaml
-  - override /sde: subvp.yaml
-  - override /loss: default.yaml
+  - override /main/dataset: mnist.yaml
+  - override /main/training: default_cifar10.yaml
+  - override /main/model: mnistnet.yaml
+  - override /main/sde: subvp.yaml
+  - override /main/loss: default.yaml
   # - override /callbacks: null
   # - override /logger: null
 
@@ -18,23 +18,23 @@ defaults:
 
 # name of the run determines folder name in logs
 # it's also accessed by loggers
-name: "${dataset.ds_name}_${sde.name}_ddpmpp_continuous_${training.seed}"
-
-sde:
-  continuous: True
-  smallest_time: 1e-2
-
-  sampling:
+name: "${main.dataset.ds_name}_${main.sde.name}_ddpmpp_continuous_${main.training.seed}"
+main:
+  sde:
+    continuous: True
     smallest_time: 1e-2
 
-dataset:
-  centered: True
+    sampling:
+      smallest_time: 1e-2
 
-loss:
-  reduce_mean: True
+  dataset:
+    centered: True
 
-model:
-  embedding_type: 'positional'
+  loss:
+    reduce_mean: True
+
+  model:
+    embedding_type: 'positional'
 
 
 # callbacks:

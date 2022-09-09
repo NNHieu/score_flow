@@ -9,7 +9,7 @@ from hydra.core.hydra_config import HydraConfig
 # recursively searches for `.env` in all folders starting from work dir
 dotenv.load_dotenv(override=True)
 
-@hydra.main(version_base="1.2", config_path="configs/", config_name="config.yaml")
+@hydra.main(version_base="1.2", config_path="configs/", config_name="train.yaml")
 def main(config: DictConfig):
     import tensorflow as tf
     tf.config.experimental.set_visible_devices([], "GPU")
@@ -28,12 +28,8 @@ def main(config: DictConfig):
     
     # Pretty print config using Rich library
     if config.get("print_config"):
-        utils.print_config(config, config.rwd, resolve=True, fields=(
-            "training",
-            "dataset",
-            "model",
-            "loss",
-            "sde",
+        utils.print_config_tree(config, resolve=True, print_order=(
+            "main",
             "logger",
             "name",
         ))
@@ -42,9 +38,9 @@ def main(config: DictConfig):
     #     return test(config)
     # # Train model
     # return train(config)
-    workdir = config.rwd
+    workdir = config.paths.output_dir
     if config.get("experiment_mode"):
-      workdir = config.exp_dir
+      workdir = config.paths.exp_dir
     return train(config, workdir)
 
 

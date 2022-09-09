@@ -24,13 +24,15 @@ from flax.training import train_state
 from icecream import ic
 ic.configureOutput(includeContext=True)
 
-log = utils.get_logger(__name__)
+log = utils.get_pylogger(__name__)
 PRNGKey = Any
 
 def optax_chain(args):
   return optax.chain(*args)
 
 def train(config: OmegaConf, workdir):
+    config = config.main
+
     # Init lightning datamodule
     log.info(f"Current working directory : {workdir}")
     log.info(f"Random seed : {config.training.seed}")

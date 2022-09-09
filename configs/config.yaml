@@ -3,13 +3,12 @@
 # specify here default training configuration
 defaults:
   - _self_
-  - dataset: mnist.yaml
+  - main/dataset: mnist.yaml
+  - main/loss: default
+  - main/model: cifarnet.yaml
+  - main/sde: subvp.yaml
+  - main/training: null
   - mode: default.yaml
-  # - trainer: default.yaml
-  - loss: default
-  - model: cifarnet.yaml
-  - sde: subvp.yaml
-  - training: null
   # - callbacks: null
   # - logger: null # set logger here or use command line (e.g. `python run.py logger=wandb`)
 
