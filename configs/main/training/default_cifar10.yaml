@@ -13,7 +13,7 @@ parallel: True
 n_jitted_steps: 5
 
 optim:
-  _target_: src.actions.optax_chain
+  _target_: src.utils.optax_chain
   args:
     - _target_: optax.clip
       max_delta: 1.0

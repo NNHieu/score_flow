@@ -24,3 +24,5 @@ dist/
 /venv
 */tensorflow_datasets/
 /outs/
+
+/backup

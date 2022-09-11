@@ -8,10 +8,10 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf, open_dict
 from rich.prompt import Prompt
 
-from src.utils import pylogger
-from src.utils.rank_zero import rank_zero_only
+from src.utils.run.rank_zero import rank_zero_only
+from src.utils.run.pylogger import get_pylogger
 
-log = pylogger.get_pylogger(__name__)
+log = get_pylogger(__name__)
 
 @rank_zero_only
 def print_config_tree(

@@ -13,7 +13,7 @@ import tensorflow as tf
 # import wandb
 from flax.training import checkpoints
 # Keep the import below for registering all model definitions
-import utils
+import utils.utils as utils
 import src.datasets as datasets
 from src import utils as sutils
 from src.trainer import states
@@ -105,7 +105,7 @@ class Trainer(object):
     def wrap_fn(pstate, batch, rng):
       rng, *next_rng = jax.random.split(rng, num=jax.local_device_count() + 1)
       next_rng = jnp.asarray(next_rng)
-      pstate, loss = step_fn(next_rng, pstate, batch)
+      (_, pstate), loss = step_fn((next_rng, pstate), batch)
       loss = flax.jax_utils.unreplicate(loss)
       return pstate, loss, rng
     return wrap_fn
@@ -113,7 +113,7 @@ class Trainer(object):
   def non_parallel_wrapper_train_step(self, step_fn):
     def wrap_fn(state, batch, rng):
       rng, next_rng = jax.random.split(rng)
-      pstate, next_rng, loss = step_fn(next_rng, pstate, batch)
+      (_, pstate), loss = step_fn((rng, pstate), batch)
       return state, loss, rng
     return wrap_fn
 
@@ -127,7 +127,8 @@ class Trainer(object):
     log.info(f"Training - step {step_idx} | {name}: {val}")
 
   def setup_logger(self):
-    self.logger = utils.SimpleLogger(self.tb_dir)
+    # self.logger = utils.SimpleLogger(self.tb_dir)
+    pass
 
   def save(self, pstate, rng, preemtion=False):
     if jax.process_index() == 0:
@@ -191,13 +192,13 @@ class Trainer(object):
     for step in range(initial_step, num_train_steps + 1, n_jitted_steps):
       self._step_idx = step
       batch = next(train_iter)['image']._numpy()
-      # TODO: consider move this scale step to preprocess 
+      # # TODO: consider move this scale step to preprocess 
       batch = jax.tree_map(lambda x: datamodule.scaler(x), batch)
-      ic(batch.shape)
+      # ic(batch.shape)
       pstate, loss, rng = self._train_step(pstate, batch, rng)
       del batch
       if step % self.log_freq == 0:
-        self.log('trai_loss', loss, step)
+        self.log('trai_loss', loss.mean(), step)
       
       if step != 0 and step % self.snapshot_freq_for_preemption == 0:
         self.save(pstate, rng, preemtion=True)

@@ -343,7 +343,7 @@ class DataModule:
     return self._create_dataset(preprocess_fn, is_train=False)
     
 
-if __name__ == '__main__':
+def main():
   import time
 
   def benchmark(dataset, num_epochs=2):
@@ -356,7 +356,10 @@ if __name__ == '__main__':
     print("Execution time:", time.perf_counter() - start_time)
   
 
-  dm = DataModule('mnist', 32, 16, False, False, False, 1, 5)
+  dm = DataModule('mnist', 32, 16, False, False, False, 16, 5)
   train_ds = dm.train_ds()
   benchmark(train_ds, num_epochs=1)
+
+if __name__ == '__main__':
+  main()
   
