@@ -9,8 +9,8 @@ defaults:
   - main/model: cifarnet.yaml
   - main/sde: subvp.yaml
   - main/training: null
-  - mode: default.yaml
   - paths: default
+  - hydra: default
 
   # experiment configs allow for version control of specific hyperparameters
   # e.g. best hyperparameters for given model and datamodule
@@ -26,8 +26,19 @@ defaults:
   # debugging config (enable through command line, e.g. `python train.py debug=default)
   - debug: null
 
+extras_util:
+  # disable python warnings if they annoy you
+  ignore_warnings: False
+
+  # ask user for tags if none are provided in the config
+  # enforce_tags: True
+
+  # pretty print config tree at the start of the run using Rich library
+  print_config: True
+
 # task name, determines output directory path
 task_name: "train"
+run_name: "runs"
 
 # tags to help you identify your experiments
 # you can overwrite this in experiment configs
@@ -35,6 +46,9 @@ task_name: "train"
 # appending lists from command line is currently not supported :(
 # https://github.com/facebookresearch/hydra/issues/1547
 tags: ["dev"]
+
+# allows for custom naming of the experiment
+name: default
 
 # set False to skip model training
 train: True

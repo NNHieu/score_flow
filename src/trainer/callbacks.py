@@ -1,3 +1,4 @@
+
 from typing import Any, Callable, Optional
 
 from .trainer import CustomTrainState, PRNGKey, Trainer
@@ -7,8 +8,9 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import tensorflow as tf
-import utils
+import utils.utils as utils
 from src import utils as sutils
+
 
 log = sutils.get_pylogger(__name__)
 
@@ -33,7 +35,10 @@ class Callback:
         """Called when the train batch begins."""
   
   def on_train_batch_end(
-        self, trainer: Trainer, outputs: STEP_OUTPUT, batch: Any, batch_idx: int
+        self, 
+        trainer: Trainer, 
+        state,
+        outputs: STEP_OUTPUT, batch: Any, batch_idx: int
     ) -> None:
         """Called when the train batch ends."""
   
@@ -45,10 +50,11 @@ class Callback:
   def on_validation_batch_end(
         self,
         trainer: Trainer,
+        state,
         outputs: Optional[STEP_OUTPUT],
         batch: Any,
         batch_idx: int,
-        dataloader_idx: int,
+        dataloader_idx: int = 0,
     ) -> None:
         """Called when the validation batch ends."""
 
@@ -97,3 +103,5 @@ class SamplingCallback(Callback):
       log.info(f'Saved sampling at {this_sample_dir}')
     else:
       raise NotImplementedError
+
+      

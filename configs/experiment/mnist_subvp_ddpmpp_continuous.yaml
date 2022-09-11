@@ -4,7 +4,6 @@
 # python run.py experiment=fixedpoint.yaml
 
 defaults:
-  - override /mode: exp.yaml
   - override /main/dataset: mnist.yaml
   - override /main/training: default_cifar10.yaml
   - override /main/model: mnistnet.yaml
@@ -29,12 +28,17 @@ main:
 
   dataset:
     centered: True
+    batch_size: 128
 
   loss:
     reduce_mean: True
 
   model:
     embedding_type: 'positional'
+  
+  training:
+    n_jitted_steps: 10
+
 
 
 # callbacks:

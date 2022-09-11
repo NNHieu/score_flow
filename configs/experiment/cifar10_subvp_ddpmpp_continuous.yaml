@@ -4,7 +4,6 @@
 # python run.py experiment=fixedpoint.yaml
 
 defaults:
-  - override /mode: exp.yaml
   - override /dataset: cifar10.yaml
   - override /training: default_cifar10.yaml
   - override /model: cifarnet.yaml

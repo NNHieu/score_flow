@@ -48,6 +48,7 @@ import models.utils as mutils
 from src import sde_lib
 from src.model import GenModel
 from src.trainer.callbacks import SamplingCallback
+from src.trainer.checkpoint import CheckpointCallback
 from src.trainer.trainer import Trainer, CustomTrainState
 
 from icecream import ic
@@ -55,45 +56,47 @@ ic.configureOutput(includeContext=True)
 
 from src import utils
 log = utils.get_pylogger(__name__)
+from utils.run.utils import task_wrapper
+
 PRNGKey = Any
 
-
-def train(config: OmegaConf, workdir):
-  main_config = config.main
+@task_wrapper
+def train(cfg: OmegaConf, workdir):
+  main_cfg = cfg.main
   # Init lightning datamodule
   log.info(f"Current working directory : {workdir}")
-  log.info(f"Random seed : {main_config.training.seed}")
-  rng = jax.random.PRNGKey(main_config.training.seed)
-  parallel_training = main_config.training.get("parallel", False)
-  assert not parallel_training or (parallel_training and main_config.training.get('jit', False))
+  log.info(f"Random seed : {main_cfg.training.seed}")
+  rng = jax.random.PRNGKey(main_cfg.training.seed)
+  parallel_training = main_cfg.training.get("parallel", False)
+  assert not parallel_training or (parallel_training and main_cfg.training.get('jit', False))
 
-  n_jitted_steps = main_config.training.get('n_jitted_steps', None) if parallel_training else None
+  n_jitted_steps = main_cfg.training.get('n_jitted_steps', None) if parallel_training else None
   if n_jitted_steps is None or n_jitted_steps <= 1: 
     n_jitted_steps = None
   else:
     # JIT multiple training steps together for faster training
     # Must be divisible by the number of steps jitted together
-    assert main_config.training.log_freq % n_jitted_steps == 0 and \
-          main_config.training.snapshot_freq_for_preemption % n_jitted_steps == 0 and \
-          main_config.training.eval_freq % n_jitted_steps == 0 and \
-          main_config.training.snapshot_freq % n_jitted_steps == 0, "Missing logs or checkpoints!"
+    assert main_cfg.training.log_freq % n_jitted_steps == 0 and \
+          main_cfg.training.snapshot_freq_for_preemption % n_jitted_steps == 0 and \
+          main_cfg.training.eval_freq % n_jitted_steps == 0 and \
+          main_cfg.training.snapshot_freq % n_jitted_steps == 0, "Missing logs or checkpoints!"
 
   # Init data module
-  log.info(f"Instantiating datamodule <{main_config.dataset._target_}>")
+  log.info(f"Instantiating datamodule <{main_cfg.dataset._target_}>")
   multi_gpu = jax.local_device_count() if parallel_training else None
-  datamodule: datasets.DataModule = hydra.utils.instantiate(main_config.dataset, 
+  datamodule: datasets.DataModule = hydra.utils.instantiate(main_cfg.dataset, 
                                       additional_dim=n_jitted_steps,
                                       multi_gpu = multi_gpu)
 
   # Init model
-  log.info(f"Instantiating model <{main_config.model.name}>")
-  score_model = mutils.get_model(main_config.model.name)(config=main_config)
-  sde: sde_lib.SDE = sde_lib.get_sde(main_config.sde)
-  gen_model = GenModel(sde, score_model, main_config.sde.continuous, main_config.dataset.image_size, main_config.dataset.num_channels)
+  log.info(f"Instantiating model <{main_cfg.model.name}>")
+  score_model = mutils.get_model(main_cfg.model.name)(config=main_cfg)
+  sde: sde_lib.SDE = sde_lib.get_sde(main_cfg.sde)
+  gen_model = GenModel(sde, score_model, main_cfg.sde.continuous, main_cfg.dataset.image_size, main_cfg.dataset.num_channels)
   
   # Init optimizer
   log.info(f"Instantiating optimizer")
-  tx = hydra.utils.instantiate(main_config.training.optim)
+  tx = hydra.utils.instantiate(main_cfg.training.optim)
 
   log.info(f"Instantiating model parameters and states")
   rng, init_model_rng = jax.random.split(rng)
@@ -109,13 +112,13 @@ def train(config: OmegaConf, workdir):
   del init_model_states, initial_params
 
   log.info(f"Get train and eval step")
-  train_step = gen_model.get_step_fn(main_config.loss, is_training=True, is_parallel=parallel_training)
-  eval_step  = gen_model.get_step_fn(main_config.loss, is_training=False, is_parallel=parallel_training)
+  train_step = gen_model.get_step_fn(main_cfg.loss, is_training=True, is_parallel=parallel_training)
+  eval_step  = gen_model.get_step_fn(main_cfg.loss, is_training=False, is_parallel=parallel_training)
   
   if n_jitted_steps is not None:
     log.info(f"Wrap scan functions")
     train_step = functools.partial(jax.lax.scan, train_step)
-    eval_step  = functools.partial(jax.lax.scan, train_step)
+    eval_step  = functools.partial(jax.lax.scan, eval_step)
 
   # def unroll_wrapper(step_fn):
   #   @functools.wraps(step_fn)
@@ -131,57 +134,46 @@ def train(config: OmegaConf, workdir):
     log.info(f"Wrap pmap step functions")
     train_step = jax.pmap(train_step, axis_name='batch', donate_argnums=(0,))
     eval_step  = jax.pmap(eval_step, axis_name='batch')
-  elif main_config.training.get('jit'):
+  elif main_cfg.training.get('jit'):
     log.info(f"Wrap jit step functions")
     train_step = jax.jit(train_step, donate_argnums=(0,))
     eval_step = jax.jit(eval_step)
   
+  log.info(f"Setup checkpoint callback")
+  checkpoint_cb = CheckpointCallback(workdir, 
+                                     main_cfg.training.snapshot_freq, 
+                                     main_cfg.training.snapshot_freq_for_preemption)
+
   log.info(f"Setup sampling callback")
-  sampling_fn = gen_model.get_sampling_fn(main_config.sde.sampling.method, 
-                                          main_config.sde.sampling.noise_removal, 
+  sampling_fn = gen_model.get_sampling_fn(main_cfg.sde.sampling.method, 
+                                          main_cfg.sde.sampling.noise_removal, 
                                           datamodule.inv_scaler,
                                           datamodule.per_device_batch_size)
   sample_dir = os.path.join(workdir, "samples")
   rng, sampling_rng = jax.random.split(rng)
   sampling_rng = jax.random.fold_in(sampling_rng, jax.process_index())
+  
   callbacks = [
     SamplingCallback(sampling_fn, sample_dir, sampling_rng)
   ]
-  trainer = Trainer(workdir, 
-                    train_step, eval_step, 
-                    main_config.training.n_iters,
-                    main_config.training.eval_freq,
-                    main_config.training.snapshot_freq_for_preemption,
-                    main_config.training.snapshot_freq,
-                    main_config.training.log_freq,
-                    is_multigpu=parallel_training, 
+  trainer = Trainer(train_step, eval_step, 
+                    main_cfg.training.n_iters,
+                    main_cfg.training.eval_freq,
+                    main_cfg.training.log_freq,
+                    is_multigpu=parallel_training,
+                    checkpoint_cb=checkpoint_cb, 
                     callbacks=callbacks,
                     restore_checkpoint_after_setup=True)
-  ic.disable()
+  # ic.disable()
   state = trainer.fit(state, datamodule)
+
 
 @hydra.main(version_base="1.2", config_path=root / "configs", config_name="train.yaml")
 def main(config: DictConfig) -> Optional[float]:
     import tensorflow as tf
     tf.config.experimental.set_visible_devices([], "GPU")
     os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
-
-    # Pretty print config using Rich library
-    if config.get("print_config"):
-        utils.print_config(config, config.rwd, resolve=True, fields=(
-            "training",
-            "dataset",
-            "model",
-            "loss",
-            "sde",
-            "logger",
-            "name",
-        ))
-
-    workdir = config.paths.output_dir
-    if config.get("experiment_mode"):
-      workdir = config.paths.exp_dir
-    return train(config, workdir)
+    return train(config)
 
 if __name__ == "__main__":
     main()

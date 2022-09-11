@@ -34,10 +34,11 @@ def task_wrapper(task_func: Callable) -> Callable:
 
         # execute the task
         try:
+            workdir = cfg.paths.exp_dir
             start_time = time.time()
-            metric_dict, object_dict = task_func(cfg=cfg)
+            results = task_func(cfg=cfg, workdir=workdir)
         except Exception as ex:
-            log.exception("")  # save exception to `.log` file
+            log.exception(ex)  # save exception to `.log` file
             raise ex
         finally:
             path = Path(cfg.paths.output_dir, "exec_time.log")
@@ -47,7 +48,7 @@ def task_wrapper(task_func: Callable) -> Callable:
 
         log.info(f"Output dir: {cfg.paths.output_dir}")
 
-        return metric_dict, object_dict
+        return results
 
     return wrap
 
@@ -67,12 +68,12 @@ def extras(cfg: DictConfig) -> None:
     """
 
     # return if no `extras` config
-    if not cfg.get("extras"):
+    if not cfg.get("extras_util"):
       log.warning("Extras config not found! <cfg.extras=null>")
       return
 
     # disable python warnings
-    if cfg.extras.get("ignore_warnings"):
+    if cfg.extras_util.get("ignore_warnings"):
         log.info("Disabling python warnings! <cfg.extras.ignore_warnings=True>")
         warnings.filterwarnings("ignore")
 
@@ -82,9 +83,14 @@ def extras(cfg: DictConfig) -> None:
     #     rich_utils.enforce_tags(cfg, save_to_file=True)
 
     # pretty print config tree using Rich library
-    if cfg.extras.get("print_config"):
+    if cfg.extras_util.get("print_config"):
         log.info("Printing config tree with Rich! <cfg.extras.print_config=True>")
-        rich_utils.print_config_tree(cfg, resolve=True, save_to_file=True)
+        rich_utils.print_config_tree(cfg, resolve=True, save_to_file=True, 
+                                    print_order = (
+                                        "main",
+                                        "paths",
+                                        "extras",
+                                    ))
 
 
 
