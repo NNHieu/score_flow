@@ -1,0 +1,82 @@
+# @package _global_
+
+# specify here default configuration
+# order of defaults determines the order in which configs override each other
+defaults:
+  - _self_
+  - main/dataset: mnist.yaml
+  - main/loss: default
+  - main/model: cifarnet.yaml
+  - main/sde: subvp.yaml
+  - main/training: null
+  - paths: default
+  - hydra: default
+
+  # experiment configs allow for version control of specific hyperparameters
+  # e.g. best hyperparameters for given model and datamodule
+  - experiment: null
+
+  # config for hyperparameter optimization
+  - hparams_search: null
+
+  # optional local config for machine/user specific settings
+  # it's optional since it doesn't need to exist and is excluded from version control
+  - optional local: default.yaml
+
+  # debugging config (enable through command line, e.g. `python train.py debug=default)
+  - debug: null
+
+extras_util:
+  # disable python warnings if they annoy you
+  ignore_warnings: False
+
+  # ask user for tags if none are provided in the config
+  # enforce_tags: True
+
+  # pretty print config tree at the start of the run using Rich library
+  print_config: True
+
+# task name, determines output directory path
+task_name: "eval"
+run_name: "runs"
+
+# tags to help you identify your experiments
+# you can overwrite this in experiment configs
+# overwrite from command line with `python train.py tags="[first_tag, second_tag]"`
+# appending lists from command line is currently not supported :(
+# https://github.com/facebookresearch/hydra/issues/1547
+tags: ["dev"]
+
+# allows for custom naming of the experiment
+name: default
+
+# set False to skip model training
+train: True
+
+# evaluate on test set, using best model weights achieved during training
+# lightning chooses best weights based on the metric specified in checkpoint callback
+test: True
+
+main:
+  eval:
+    likelihood:
+      enable: True
+      bound: False
+      offset: True
+      dsm: True
+
+    data:
+      dequantizer: False
+      split: null
+
+      
+    num_samples: 50000
+    begin_ckpt: 26
+    end_ckpt: 26
+    ckpt_id: 26
+    batch_size: 256
+    enable_sampling: False
+    enable_loss: False
+    enable_bpd: True
+    bpd_dataset: 'test'
+    num_repeats: 5

@@ -328,20 +328,32 @@ class DataModule:
       ds = ds.shuffle(self.shuffle_buffer_size)
     # ds.interleave()
     ds = ds.map(preprocess_fn, num_parallel_calls=tf.data.AUTOTUNE)
-    for batch_size in reversed(self.batch_dims):
-      ds = ds.batch(batch_size, drop_remainder=True)
-    return ds.prefetch(self.prefetch_size)
+    ds = ds.batch(self.per_device_batch_size, drop_remainder=True)
+    # for batch_size in reversed(self.batch_dims):
+    #   ds = ds.batch(batch_size, drop_remainder=True)
+    return ds
 
   def train_ds(self):
     preprocess_fn = self._get_process_fn(uniform_dequantization=self.uniform_dequantization, 
-                                          evaluation=True)
+                                          evaluation=False)
     return self._create_dataset(preprocess_fn, is_train=True)
 
   def test_ds(self):
     preprocess_fn = self._get_process_fn(uniform_dequantization=self.uniform_dequantization, 
-                                          evaluation=False)
+                                          evaluation=True)
     return self._create_dataset(preprocess_fn, is_train=False)
-    
+  
+  def eval_train_ds(self):
+    preprocess_fn = self._get_process_fn(uniform_dequantization=self.uniform_dequantization, 
+                                          evaluation=True)
+    return self._create_dataset(preprocess_fn, is_train=True, num_epochs=1)
+
+  def eval_test_ds(self):
+    preprocess_fn = self._get_process_fn(uniform_dequantization=self.uniform_dequantization, 
+                                          evaluation=True)
+    return self._create_dataset(preprocess_fn, is_train=False, num_epochs=1)
+
+
 
 def main():
   import time

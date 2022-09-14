@@ -1,3 +1,4 @@
+from optparse import Option
 from typing import Any, Callable, Optional, Sequence
 
 import jax
@@ -6,7 +7,7 @@ import flax
 from flax.training import train_state
 import optax
 # import wandb
-from .runner import TrainStateRunner
+from .runner import Strategy
 # from src.trainer.checkpoint import CheckpointCallback
 # Keep the import below for registering all model definitions
 import src.datasets as datasets
@@ -66,13 +67,16 @@ class Trainer(object):
               n_iters: int,
               eval_freq: int,
               log_freq: int,
-              is_multigpu: bool =False,
+              n_jitted_step: Optional[int] = None, 
+              multigpu: Optional[int] = None,
+              jit_step_fn: bool = True,
               checkpoint_cb: "CheckpointCallback" = None,
               callbacks: Optional[Sequence["Callback"]] = None,
               restore_checkpoint_after_setup = False) -> None:
     # self.setup_dir()
     # self.setup_logger()
-    self.is_multi_gpu = is_multigpu
+    self.strategy = Strategy(n_jitted_step, multigpu, jit_step_fn=jit_step_fn)
+    
     self.num_train_steps = n_iters
     self.eval_freq = eval_freq
     self.restore_checkpoint_after_setup = restore_checkpoint_after_setup
@@ -108,10 +112,9 @@ class Trainer(object):
       saved_state = saved_state.replace(rng=rng)
       return saved_state
   
-  def _get_train_runner(self):
+  def _get_trainstate(self):
     assert self.state.fn == states.TrainerFn.FITTING and self.state.status == states.TrainerStatus.RUNNING
-    return self.train_runner
-
+    return self._tmp_trainstate, self._tmp_rng
 
   def load(self, state):
     return self.checkpoint_cb.restore(state)
@@ -126,11 +129,8 @@ class Trainer(object):
     # ----------------------------
     # SET UP TRAINING
     # ----------------------------
-    n_jitted_steps = datamodule.additional_dim
-    if n_jitted_steps is None: n_jitted_steps = 1
     train_ds, eval_ds = datamodule.train_ds(), datamodule.test_ds()
-    train_iter, eval_iter = iter(train_ds), iter(eval_ds)
-
+    
     # ----------------------------
     # TRAIN
     # ----------------------------
@@ -141,25 +141,31 @@ class Trainer(object):
       log.debug(f"{self.__class__.__name__}: restoring module and callbacks from checkpoint path: {self.checkpoint_cb.checkpoint_meta_dir}")
       # self._restore_modules_and_callbacks(ckpt_path)
       trainstate = self.load(trainstate)
-    
     initial_step_idx = int(trainstate.step)
-    num_train_steps = self.num_train_steps
+    rng = trainstate.rng
 
-    self.train_runner = TrainStateRunner(self, trainstate, self._train_step, self._eval_step, self.is_multi_gpu)
-    del trainstate
+    train_ds = self.strategy.prepair_ds(train_ds)
+    eval_ds = self.strategy.prepair_ds(eval_ds)
+    trainstate = self.strategy.prepair_trainstate(trainstate)
+    train_step = self.strategy.prepair_step_fn(self._train_step)
+    eval_step = self.strategy.prepair_step_fn(self._eval_step)
+    rng_split = self.strategy.get_rng_split_fn()
 
     # In case there are multiple hosts (e.g., TPU pods), only log to host 0
     log.info("Starting training loop at step %d." % (initial_step_idx,))
-    for step in range(initial_step_idx, num_train_steps + 1, n_jitted_steps):
+    train_iter, eval_iter = iter(train_ds), iter(eval_ds)
+    for step in range(initial_step_idx, self.num_train_steps + 1, self.strategy.n_jitted_step):
       self._step_idx = step
       batch = next(train_iter)['image']._numpy()
-      # # TODO: consider move this scale step to preprocess 
+      # TODO: consider move this scale step to preprocess 
       batch = jax.tree_map(lambda x: datamodule.scaler(x), batch)
       # ic(batch.shape)
-      loss, outputs = self.train_runner.train_step(batch)
-      if step % self.log_freq == 0:
-        self.log('trai_loss', loss.mean(), step)      
-      self._call_callback_hooks("on_train_batch_end", self.train_runner, outputs, batch, step)
+      rng, next_rng = rng_split(rng)
+      self._tmp_rng = rng
+      (_, trainstate), loss = train_step((next_rng, trainstate), batch)
+      self._tmp_trainstate = trainstate
+      if step % self.log_freq == 0: self.log('trai_loss', loss.mean(), step)
+      self._call_callback_hooks("on_train_batch_end", trainstate, None, batch, step)
       del batch
 
       # Report the loss on an evaluation dataset periodically
@@ -167,18 +173,71 @@ class Trainer(object):
         eval_batch = next(eval_iter)['image']._numpy()  # pylint: disable=protected-access
         # TODO: consider move this scale step to preprocess 
         eval_batch = jax.tree_map(lambda x: datamodule.scaler(x), eval_batch)
-        eval_loss, eval_outputs  = self.train_runner.eval_step(eval_batch)
+        rng, next_rng = rng_split(rng)
+        self._tmp_rng = rng
+        _, eval_loss = eval_step((next_rng, trainstate), eval_batch)
         self.log("eval_loss", eval_loss.mean(), step)
-        self._call_callback_hooks("on_validation_batch_end", self.train_runner, eval_outputs, eval_batch, step, dataloader_idx=0)
+        self._call_callback_hooks("on_validation_batch_end", trainstate, None, eval_batch, step, dataloader_idx=0)
         del eval_batch
     
     # hook
     # self._call_callback_hooks("on_fit_end", self)
+    result_state = self.strategy.get_state(trainstate)
     self.train_runner = None
     self.state.fn = states.TrainerFn.FITTING
     self.state.status = states.TrainerStatus.FINISHED
-    return self.train_runner.get_state()
+    return result_state
   
+  def eval(self, state, dataset, scaler):
+    self._call_and_handle_interrupt(self._eval, state, dataset, scaler)
+
+  def _eval(self, trainstate, dataset, scaler):
+    self.state.fn = states.TrainerFn.VALIDATING
+    self.state.status = states.TrainerStatus.RUNNING
+    
+    # ----------------------------
+    # SET UP VALIDATING
+    # ----------------------------
+    num_train_steps = self.num_train_steps
+    initial_step_idx = 0
+
+    rng = trainstate.rng
+    ic(self.strategy._multi_jitted_step)
+    ic(self.strategy.is_multi_gpu)
+    ic(self.strategy._jit_step_fn)
+    dataset = self.strategy.prepair_ds(dataset)
+    ds_iter = iter(dataset)
+    trainstate = self.strategy.prepair_trainstate(trainstate)
+    eval_step = self.strategy.prepair_step_fn(self._eval_step)
+    rng_split = self.strategy.get_rng_split_fn()
+
+    # ----------------------------
+    # VALIDATE
+    # ----------------------------
+    # hook
+    # self._call_callback_hooks("on_fit_start", self)
+    # self._log_hyperparams()
+
+    # In case there are multiple hosts (e.g., TPU pods), only log to host 0
+    log.info("Starting validating loop at step %d." % (initial_step_idx,))
+    num_steps = len(dataset)
+    for step in range(initial_step_idx, num_steps, self.strategy.n_jitted_step):
+      eval_batch = next(ds_iter)['image']._numpy()  # pylint: disable=protected-access
+      # TODO: consider move this scale step to preprocess 
+      eval_batch = jax.tree_map(lambda x: scaler(x), eval_batch)
+      rng, next_rng = rng_split(rng)
+      self._tmp_rng = rng
+      eval_outputs = eval_step((next_rng, trainstate), eval_batch)
+      log.info(f"Eval step {step}/{num_steps}")
+      self._call_callback_hooks("on_validation_batch_end", trainstate, eval_outputs, eval_batch, step, dataloader_idx=0)
+      del eval_batch
+    
+    # hook
+    # self._call_callback_hooks("on_fit_end", self)
+    self.state.fn = states.TrainerFn.VALIDATING
+    self.state.status = states.TrainerStatus.FINISHED
+    return None
+
   @property
   def global_step(self):
     if self.state.fn == states.TrainerFn.FITTING and \
@@ -201,7 +260,7 @@ class Trainer(object):
   ) -> None:
     log.debug(f"{self.__class__.__name__}: calling callback hook: {hook_name}")
 
-    if hook_name in ('on_train_batch_end', ):
+    if self.checkpoint_cb is not None and hook_name in ('on_train_batch_end', ):
       checkpoint_fn = getattr(self.checkpoint_cb, hook_name)
       if callable(checkpoint_fn):
         checkpoint_fn(self)
@@ -216,7 +275,6 @@ class Trainer(object):
       fn = getattr(callback, "on_save_checkpoint")
       if callable(fn):
         fn(self, pstate, state)
-
 
   def _call_and_handle_interrupt(self, trainer_fn: Callable, *args: Any, **kwargs: Any) -> Any:
     r"""

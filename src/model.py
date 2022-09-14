@@ -1,4 +1,4 @@
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Union
 
 import jax
 import jax.numpy as jnp
@@ -10,6 +10,8 @@ import sde_lib
 from models import utils as mutils
 import src.datasets as datasets
 import sampling
+import bound_likelihood
+import likelihood
 
 PRNGKey = Any
 
@@ -53,6 +55,31 @@ class GenModel:
     else:
       raise ValueError(f"Sampler name {method} unknown.")
     return sampling_fn
+  
+  def get_likelihood_fn(self, dequantizer, bound_llh, data_inv_scaler: Callable, dsm:Optional[bool]=None, offset: Optional[bool] =None):
+    if dequantizer:
+      raise NotImplemented
+
+    score_apply_fn = self.get_score_fn(train=False, return_state=False)
+    wrap_score_apply_fn = lambda s, x, t : score_apply_fn(s.params, s.model_states, x, t)
+    if bound_llh:
+      likelihood_fn = bound_likelihood.get_likelihood_bound_fn(self.sde, 
+                                                               wrap_score_apply_fn, 
+                                                               data_inv_scaler,
+                                                               dsm=dsm,
+                                                               eps=self.sde.likelihood.smallest_time,
+                                                               importance_weighting=True,
+                                                               N=1000,
+                                                               eps_offset=offset)
+    else:
+      likelihood_fn = likelihood.get_likelihood_fn(self.sde, wrap_score_apply_fn, data_inv_scaler, eps=self.sde.smallest_time)
+    
+    def eval_likelihood_step(carry_state, data):
+      rng, pstate = carry_state
+      bpd = likelihood_fn(rng, pstate, data)[0]
+      return bpd
+    
+    return eval_likelihood_step
 
   def get_step_fn(self, loss_config, is_training, is_parallel=False, **kwargs):
     reduce_mean = loss_config.reduce_mean

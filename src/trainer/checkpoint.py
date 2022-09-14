@@ -52,13 +52,14 @@ class CheckpointCallback(Callback):
   def on_train_batch_end(self, trainer):
     mode = self._should_save(trainer.global_step, trainer.num_train_steps)
     if mode.savable():
-      train_runner = trainer._get_train_runner()
-      saved_state = train_runner.get_state()
+      trainstate, rng = trainer._get_trainstate()
+      saved_state = trainer.strategy.get_state(trainstate)
+      saved_state = saved_state.replace(rng=rng)
       if mode.include(CheckpointMode.PREEMPTION):
         self.save(CheckpointMode.PREEMPTION, None, saved_state, trainer.global_step)
       if mode.include(CheckpointMode.NORMAL):
         self.save(CheckpointMode.NORMAL, None, saved_state, trainer.global_step)
-        trainer._call_callbacks_on_save_checkpoint(train_runner.get_pstate(), train_runner.get_state())
+        trainer._call_callbacks_on_save_checkpoint(trainstate, saved_state)
     
   def _should_save(self, step_idx, num_train_steps):
     # Preemption

@@ -26,7 +26,7 @@ from src import sde_lib
 import jax
 import numpy as np
 from flax.training import checkpoints
-from utils import batch_mul
+from utils.utils import batch_mul
 import optax
 
 
@@ -147,15 +147,15 @@ def init_model(rng, config, data=None, label=None):
   return model, init_model_state, initial_params
 
 
-def data_dependent_init_of_dequantizer(rng, config, init_data):
-  if config.data.dataset == 'ImageNet':
-    if config.data.image_size == 32:
+def data_dependent_init_of_dequantizer(rng, dataset, image_size, init_data):
+  if dataset == 'ImageNet':
+    if image_size == 32:
       from .flowpp import dequantization_imagenet32
       model = dequantization_imagenet32.Dequantization()
-    elif config.data.image_size == 64:
+    elif image_size == 64:
       from .flowpp import dequantization_imagenet64
       model = dequantization_imagenet64.Dequantization()
-  elif config.data.dataset == 'CIFAR10':
+  elif dataset == 'CIFAR10':
     from .flowpp import dequantization_cifar10
     model = dequantization_cifar10.Dequantization()
 
