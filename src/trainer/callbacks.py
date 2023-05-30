@@ -121,5 +121,6 @@ class SaveBpd(Callback):
                             "wb") as fout:
       io_buffer = io.BytesIO()
       np.savez_compressed(io_buffer, bpd)
+      ic(bpd)
       fout.write(io_buffer.getvalue())
       

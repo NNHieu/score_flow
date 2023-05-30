@@ -1,10 +1,10 @@
 import pyrootutils
 
 root = pyrootutils.setup_root(
-    search_from=__file__,
-    indicator=[".git", "pyproject.toml"],
-    pythonpath=True,
-    dotenv=True,
+  search_from=__file__,
+  indicator=[".git", "pyproject.toml"],
+  pythonpath=True,
+  dotenv=True,
 )
 
 # ------------------------------------------------------------------------------------ #
@@ -95,11 +95,12 @@ def prepair_eval_bpd(main_cfg, multi_gpu, gen_model: GenModel):
   # rng = jax.random.fold_in(rng, jax.host_id())
   # num_sampling_rounds = main_cfg.num_samples // main_cfg.dataset.batch_size + 1
   num_bpd_rounds = len(ds_bpd) * bpd_num_repeats
-  step_fn = gen_model.get_likelihood_fn(main_cfg.eval.data.dequantizer, 
-                                        config_likelihood.bound, 
-                                        datamodule.inv_scaler, 
-                                        config_likelihood.dsm, 
-                                        config_likelihood.offset)
+  # step_fn = gen_model.get_likelihood_fn(main_cfg.eval.data.dequantizer, 
+  #                                       config_likelihood.bound, 
+  #                                       datamodule.inv_scaler, 
+  #                                       config_likelihood.dsm, 
+  #                                       config_likelihood.offset)
+  step_fn = gen_model.get_ood_score()
 
   return datamodule, ds_bpd, step_fn, num_bpd_rounds, bpd_num_repeats
 

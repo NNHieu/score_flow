@@ -1,3 +1,4 @@
+import functools
 from typing import Any, Callable, Optional, Union
 
 import jax
@@ -80,6 +81,26 @@ class GenModel:
       return bpd
     
     return eval_likelihood_step
+
+  def get_ood_score(self):
+    score_apply_fn = self.get_score_fn(train=False, return_state=False)
+    wrap_score_apply_fn = lambda s, x, t : score_apply_fn(s.params, s.model_states, x, t)
+    
+    @jax.pmap
+    def drift_fn(state, x, t):
+      """Get the drift function of the reverse-time SDE."""
+      score_fn = functools.partial(wrap_score_apply_fn, state)
+      rsde = self.sde.reverse(score_fn, probability_flow=True)
+      return rsde.sde(x, t)[0]
+
+    def eval_score_step(carry_state, data):
+      rng, pstate = carry_state
+      drift = drift_fn(pstate, data, jnp.ones((data.shape[0], data.shape[1],))*self.sde.smallest_time)
+      drift = drift.reshape(data.shape[0]*data.shape[1], -1)
+      score = jnp.linalg.norm(drift, axis=1)
+      return score
+    
+    return eval_score_step
 
   def get_step_fn(self, loss_config, is_training, is_parallel=False, **kwargs):
     reduce_mean = loss_config.reduce_mean
